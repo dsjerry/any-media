@@ -527,6 +527,7 @@ onMounted(async () => {
   box-sizing: border-box;
   overflow-y: auto;
   height: 100%;
+  max-height: calc(100vh - 200px); /* 确保不会遮挡其他元素 */
 }
 
 /* 文件夹列表 */
@@ -714,6 +715,7 @@ onMounted(async () => {
   grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
   gap: 16px;
   flex: 1;
+  overflow-y: auto;
 }
 
 .file-item {

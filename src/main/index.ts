@@ -9,7 +9,7 @@ function createWindow() {
     width: 1200,
     height: 800,
     minWidth: 800,
-    minHeight: 600,
+    minHeight: 720,
     webPreferences: {
       scrollBounce: true,
       nodeIntegration: false,
@@ -50,6 +50,25 @@ function createWindow() {
 
   mainWindow.on("closed", () => {
     mainWindow = null
+  })
+
+  // 监听窗口最大化事件
+  mainWindow.on("maximize", () => {
+    mainWindow?.webContents.send("window-maximize")
+  })
+
+  // 监听窗口取消最大化事件
+  mainWindow.on("unmaximize", () => {
+    mainWindow?.webContents.send("window-unmaximize")
+  })
+
+  // 处理切换最大化状态的请求
+  ipcMain.handle('toggle-maximize', () => {
+    if (mainWindow?.isMaximized()) {
+      mainWindow.unmaximize()
+    } else {
+      mainWindow?.maximize()
+    }
   })
 }
 

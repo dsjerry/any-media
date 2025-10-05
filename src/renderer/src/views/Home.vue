@@ -102,7 +102,7 @@ const openRecentFile = (file: MediaFile) => {
   background: linear-gradient(135deg, #1a1a1a 0%, #2d2d2d 100%);
   position: relative;
   padding: 40px 20px;
-  overflow: hidden;
+  overflow-y: auto;
   height: 100%;
 }
 
@@ -239,6 +239,7 @@ const openRecentFile = (file: MediaFile) => {
   margin: 0 auto;
   position: relative;
   z-index: 1;
+  padding-bottom: 80px;
 }
 
 .section-title {

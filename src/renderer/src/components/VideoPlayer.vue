@@ -5,8 +5,6 @@
       ref="videoPlayer"
       class="video-js vjs-default-skin vjs-big-play-centered"
       preload="auto"
-      width="100%"
-      height="100%"
       :poster="poster"
       data-setup='{"fluid": true}'
     >
@@ -381,18 +379,26 @@ onUnmounted(() => {
 .video-player-container {
   position: relative;
   width: 100%;
-  height: 100%;
+  padding-bottom: 56.25%; /* 16:9 宽高比 (9/16 = 0.5625) */
+  height: 0;
   background: #000;
   border-radius: 12px;
   overflow: hidden;
-  min-height: 200px;
+}
+
+/* 全屏模式下的视频播放器容器 */
+.video-player-container:fullscreen {
+  padding-bottom: 0;
+  height: 100%;
 }
 
 .video-js {
-  width: 100% !important;
-  height: 100% !important;
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
   border-radius: 12px !important;
-  min-height: 200px;
 }
 
 /* 大播放按钮 */

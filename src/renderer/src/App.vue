@@ -50,13 +50,13 @@
       </ErrorBoundary>
     </main>
 
-    <footer class="app-footer">
+    <!-- <footer class="app-footer">
       <div class="footer-content">
         <div class="footer-info">
           <p>&copy; dsjerry</p>
         </div>
       </div>
-    </footer>
+    </footer> -->
   </div>
 </template>
 
@@ -73,6 +73,13 @@ import ErrorBoundary from './components/ErrorBoundary.vue';
   display: flex;
   flex-direction: column;
   height: 100vh;
+}
+
+/* 全屏模式样式 */
+.app-container:fullscreen {
+  height: 100vh;
+  width: 100vw;
+  overflow: hidden;
 }
 
 .app-container::before {

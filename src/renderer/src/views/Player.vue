@@ -1,7 +1,7 @@
 <template>
   <div class="app-container">
     <!-- 标题栏 -->
-    <div class="title-bar">
+    <div class="title-bar" @dblclick="toggleMaximize">
       <div class="title-bar-content">
         <span v-if="currentFile" class="file-title">{{ currentFile.name }}</span>
       </div>
@@ -86,7 +86,7 @@
     </div>
 
     <!-- 控制栏 -->
-    <div v-if="currentFile" class="control-bar">
+    <div v-if="currentFile && isShowControlBar" class="control-bar">
       <div class="media-info">
         <div class="media-title">{{ currentFile.name }}</div>
         <div class="media-path">{{ currentFile.path }}</div>
@@ -151,6 +151,7 @@ const currentFile = ref<MediaFile | null>(null)
 const mediaUrl = ref<string>("")
 const isLoading = ref(false)
 const isPlaying = ref(false)
+const isShowControlBar = ref(false)
 const mediaInfo = ref<MediaInfo>({})
 const currentIndex = ref(-1)
 
@@ -489,6 +490,75 @@ const onAudioTimeUpdate = (_currentTime: number) => {
   // 使用下划线前缀表示参数未使用
 }
 
+// 处理窗口最大化事件
+const handleWindowMaximize = () => {
+  console.log("窗口已最大化")
+  // 在这里可以添加特定的逻辑，例如调整播放器大小
+  adjustPlayerForMaximize()
+}
+
+// 处理窗口取消最大化事件
+const handleWindowUnmaximize = () => {
+  console.log("窗口已取消最大化")
+  // 在这里可以添加特定的逻辑，例如恢复播放器大小
+  adjustPlayerForUnmaximize()
+}
+
+// 切换窗口最大化状态
+const toggleMaximize = async () => {
+  try {
+    // 调用主进程API来切换窗口最大化状态
+    await window.electronAPI.toggleMaximize()
+  } catch (error) {
+    console.error("切换窗口最大化状态时出错:", error)
+  }
+}
+
+// 调整播放器以适应最大化窗口
+const adjustPlayerForMaximize = () => {
+  // 设置播放器的最大宽高，避免出现滚动条
+  const playerArea = document.querySelector('.player-area') as HTMLElement
+  const videoContainer = document.querySelector('.video-container') as HTMLElement
+  if (playerArea) {
+    // 获取屏幕尺寸
+    const screenWidth = window.screen.width
+    const screenHeight = window.screen.height
+    
+    // 设置最大宽高（可以根据需要调整这些值）
+    const maxWidth = Math.min(screenWidth * 0.9, 1920) // 最大宽度为屏幕宽度的90%或1920px
+    const maxHeight = Math.min(screenHeight * 0.8, 1080) // 最大高度为屏幕高度的80%或1080px
+    
+    // 应用样式
+    playerArea.style.maxWidth = `${maxWidth}px`
+    playerArea.style.maxHeight = `${maxHeight}px`
+    playerArea.style.margin = '0 auto' // 居中显示
+  }
+  
+  // 同样调整视频容器
+  if (videoContainer) {
+    videoContainer.style.maxWidth = '100%'
+    videoContainer.style.maxHeight = 'calc(100vh - 200px)' // 为控制栏留出空间
+  }
+}
+
+// 调整播放器以适应普通窗口
+const adjustPlayerForUnmaximize = () => {
+  // 恢复播放器的默认样式
+  const playerArea = document.querySelector('.player-area') as HTMLElement
+  const videoContainer = document.querySelector('.video-container') as HTMLElement
+  if (playerArea) {
+    playerArea.style.maxWidth = ''
+    playerArea.style.maxHeight = ''
+    playerArea.style.margin = ''
+  }
+  
+  // 恢复视频容器的默认样式
+  if (videoContainer) {
+    videoContainer.style.maxWidth = ''
+    videoContainer.style.maxHeight = ''
+  }
+}
+
 // 返回首页时清除当前文件
 // 如果需要使用该功能，请导入 useRouter 并取消下面的注释
 /*
@@ -549,6 +619,17 @@ onMounted(async () => {
   if (mediaStore.currentFile && !currentFile.value) {
     await loadMediaFile(mediaStore.currentFile)
   }
+
+  // 监听窗口最大化和取消最大化事件
+  window.electronAPI.onWindowMaximize(() => {
+    // 窗口最大化时的处理逻辑
+    handleWindowMaximize()
+  })
+
+  window.electronAPI.onWindowUnmaximize(() => {
+    // 窗口取消最大化时的处理逻辑
+    handleWindowUnmaximize()
+  })
 })
 
 onUnmounted(() => {
@@ -561,6 +642,10 @@ onUnmounted(() => {
     audioRef.value.removeEventListener("play", () => (isPlaying.value = true))
     audioRef.value.removeEventListener("pause", () => (isPlaying.value = false))
   }
+  
+  // 清理窗口事件监听器
+  window.electronAPI.removeAllListeners('window-maximize')
+  window.electronAPI.removeAllListeners('window-unmaximize')
 })
 </script>
 
@@ -573,6 +658,13 @@ onUnmounted(() => {
   flex-direction: column;
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
   position: relative;
+}
+
+/* 全屏模式样式 */
+.app-container:fullscreen {
+  height: 100vh;
+  width: 100vw;
+  overflow: hidden;
 }
 
 .app-container::before {
@@ -666,11 +758,18 @@ onUnmounted(() => {
   backdrop-filter: blur(10px);
   -webkit-backdrop-filter: blur(10px);
   position: relative;
-  overflow-y: auto;
+  overflow-y: hidden; /* 防止播放区域出现滚动条 */
   z-index: 1;
   min-height: 0; /* 允许flex收缩 */
   width: 100%;
   height: 100%;
+  display: flex;
+  flex-direction: column;
+}
+
+/* 全屏模式下的播放区域 */
+.player-area:fullscreen {
+  overflow-y: hidden;
 }
 
 /* 空状态 */
@@ -767,8 +866,18 @@ onUnmounted(() => {
 .video-container {
   width: 100%;
   height: 100%;
-  min-height: 400px; /* 确保有足够空间显示控件 */
   position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+  overflow: hidden;
+}
+
+/* 全屏模式下的视频容器 */
+.video-container:fullscreen {
+  padding: 0;
 }
 
 /* 移动端视频容器调整 */
@@ -780,7 +889,8 @@ onUnmounted(() => {
 
 /* 音频容器 */
 .audio-container {
-  height: 100%;
+  flex: 1;
+  min-height: 0; /* 允许flex收缩 */
   display: flex;
   flex-direction: column;
   justify-content: center;
@@ -837,8 +947,8 @@ onUnmounted(() => {
 
 /* 图片容器 */
 .image-container {
-  width: 100%;
-  height: 100%;
+  flex: 1;
+  min-height: 0; /* 允许flex收缩 */
   display: flex;
   align-items: center;
   justify-content: center;
@@ -870,9 +980,20 @@ onUnmounted(() => {
   justify-content: space-between;
   padding: 12px 24px;
   gap: 16px;
-  position: relative;
+  position: sticky; /* 使控制栏始终可见 */
+  bottom: 0; /* 粘性定位在底部 */
   z-index: 10;
   flex-shrink: 0; /* 防止控制栏被压缩 */
+}
+
+/* 全屏模式下的控制栏 */
+.control-bar:fullscreen {
+  position: fixed;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  width: 100%;
+  border-radius: 0;
 }
 
 .media-info {
