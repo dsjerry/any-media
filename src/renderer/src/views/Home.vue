@@ -99,11 +99,11 @@ const openRecentFile = (file: MediaFile) => {
 <style scoped>
 /* 主页毛玻璃风格 */
 .home-container {
-  min-height: 100vh;
   background: linear-gradient(135deg, #1a1a1a 0%, #2d2d2d 100%);
   position: relative;
-  overflow: hidden;
   padding: 40px 20px;
+  overflow: hidden;
+  height: 100%;
 }
 
 .home-container::before {

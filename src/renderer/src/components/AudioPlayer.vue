@@ -132,8 +132,66 @@ const setupEventListeners = () => {
 
   // 错误事件
   audioElement.on("error", (error: any) => {
-    console.error("Video.js 音频错误:", error)
-    emit("error", error)
+    const audioError = audioElement.error()
+    
+    // 提供错误信息
+    const errorInfo = {
+      code: audioError?.code,
+      message: audioError?.message || error?.message || "未知错误",
+      src: props.src,
+      mimeType: props.mimeType,
+    }
+    
+    console.error("Audio error:", errorInfo)
+    
+    // 处理不同类型的错误
+    if (audioError?.code === 4) { // MEDIA_ERR_SRC_NOT_SUPPORTED
+      console.log("Audio format not supported, trying different format...")
+      // 尝试不同的音频格式
+      setTimeout(() => {
+        if (player.value) {
+          // 尝试不同的 MIME 类型
+          const mimeTypes = [
+            "audio/mpeg",
+            "audio/wav",
+            "audio/ogg",
+            "audio/aac",
+            "audio/flac",
+            "audio/mp4",
+          ]
+          
+          for (const mimeType of mimeTypes) {
+            try {
+              console.log(`Trying audio MIME type: ${mimeType}`)
+              player.value.src({
+                src: props.src,
+                type: mimeType,
+              })
+              player.value.load()
+              if (props.autoplay) {
+                player.value.play().catch(() => {})
+              }
+              break
+            } catch (err: unknown) {
+              console.warn(`Error with audio MIME type ${mimeType}:`, err)
+            }
+          }
+        }
+      }, 100)
+    } else if (audioError?.code === 2) { // MEDIA_ERR_NETWORK
+      console.log("Network error, trying to reload audio...")
+      // 网络错误，尝试重新加载
+      setTimeout(() => {
+        if (player.value) {
+          player.value.load()
+          if (props.autoplay) {
+            player.value.play().catch(() => {})
+          }
+        }
+      }, 1000)
+    }
+    
+    emit("error", errorInfo)
   })
 
   // 时间更新事件
@@ -154,14 +212,14 @@ const togglePlay = () => {
   if (!player.value || isChangingSource.value) return
   if (player.value.paused()) {
     try {
-      player.value.play().catch(err => {
+      player.value.play().catch((err: Error) => {
         if (err.name === 'AbortError') {
           console.log("播放被中断，可能是由于同时进行的暂停操作")
         } else {
           console.warn("播放失败:", err)
         }
       })
-    } catch (err) {
+    } catch (err: unknown) {
       console.warn("播放异常:", err)
     }
   } else {
@@ -173,7 +231,7 @@ const play = () => {
   if (!player.value || isChangingSource.value) return
   try {
     player.value?.play()
-  } catch (err) {
+  } catch (err: unknown) {
     console.warn("播放异常:", err)
   }
 }
@@ -232,7 +290,7 @@ watch(
         type: props.mimeType,
       })
       if (props.autoplay) {
-        player.value.play().catch(err => {
+        player.value.play().catch((err: Error) => {
           if (err.name === 'AbortError') {
             console.log("自动播放被中断，可能是由于同时进行的暂停操作")
           } else {

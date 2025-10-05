@@ -101,11 +101,13 @@
 <style scoped>
 /* 设置页面毛玻璃风格 */
 .settings-container {
-  min-height: 100vh;
   background: linear-gradient(135deg, #1a1a1a 0%, #2d2d2d 100%);
   position: relative;
-  overflow: hidden;
-  padding: 40px 20px;
+  overflow-y: auto;
+  width: 100%;
+  box-sizing: border-box;
+  max-width: 100%;
+  height: 100%;
 }
 
 .settings-container::before {
@@ -153,6 +155,9 @@
   margin: 0 auto;
   position: relative;
   z-index: 1;
+  height: 100%;
+  box-sizing: border-box;
+  width: 100%;
 }
 
 /* 设置区域 */

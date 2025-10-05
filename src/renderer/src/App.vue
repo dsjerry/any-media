@@ -45,7 +45,9 @@
     </header>
 
     <main class="main-content">
-      <router-view />
+      <ErrorBoundary component-name="RouterView">
+        <router-view />
+      </ErrorBoundary>
     </main>
 
     <footer class="app-footer">
@@ -59,17 +61,18 @@
 </template>
 
 <script setup lang="ts">
+import ErrorBoundary from './components/ErrorBoundary.vue';
 </script>
 
 <style scoped>
 /* App 根组件毛玻璃风格 */
 .app-container {
-  min-height: 100vh;
   background: linear-gradient(135deg, #1a1a1a 0%, #2d2d2d 100%);
   position: relative;
   overflow: hidden;
   display: flex;
   flex-direction: column;
+  height: 100vh;
 }
 
 .app-container::before {
@@ -196,6 +199,11 @@
   position: relative;
   z-index: 1;
   min-height: calc(100vh - 64px - 60px);
+  overflow: hidden;
+  width: 100%;
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
 }
 
 /* 应用底部 */

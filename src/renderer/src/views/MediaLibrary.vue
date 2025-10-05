@@ -348,11 +348,14 @@ onMounted(async () => {
 <style scoped>
 /* 媒体库页面毛玻璃风格 */
 .media-library-container {
-  min-height: 100vh;
   background: linear-gradient(135deg, #1a1a1a 0%, #2d2d2d 100%);
   position: relative;
-  overflow: hidden;
+  overflow-y: auto;
   padding: 40px 20px;
+  width: 100%;
+  box-sizing: border-box;
+  max-width: 100%;
+  height: 100%;
 }
 
 .media-library-container::before {
@@ -520,6 +523,10 @@ onMounted(async () => {
   position: relative;
   z-index: 1;
   min-height: 600px;
+  width: 100%;
+  box-sizing: border-box;
+  overflow-y: auto;
+  height: 100%;
 }
 
 /* 文件夹列表 */

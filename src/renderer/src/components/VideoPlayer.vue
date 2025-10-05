@@ -52,11 +52,36 @@ const videoPlayer = ref<HTMLVideoElement>()
 const player = ref<any>(null)
 // 处理文件路径
 const processSource = (src: string) => {
-  if (!src || src.startsWith('http') || src.startsWith('file://') || src.startsWith('safe-file://')) {
-    return src;
+  if (!src) return src
+
+  console.log("VideoPlayer.processSource input:", src)
+
+  // 如果已经是 URL，直接返回
+  if (src.startsWith("http://") || src.startsWith("https://") || 
+      src.startsWith("file://") || src.startsWith("data:")) {
+    return src
   }
-  return `file:///${src.replace(/\\/g, '/')}`;
-};
+  
+  // 如果是 safe-file 协议，去除可能的重复前缀
+  if (src.startsWith("safe-file://")) {
+    if (src.includes('safe-file://safe-file://')) {
+      return src.replace('safe-file://safe-file://', 'safe-file://')
+    }
+    return src
+  }
+
+  // 如果是本地路径，转换为 safe-file:// 协议
+  // 规范化路径，使用正斜杠
+  const normalizedPath = src.replace(/\\/g, "/")
+  
+  // 对 Windows 路径进行处理，确保驱动器字母后有正确的斜杠
+  const formattedPath = /^[a-zA-Z]:/.test(normalizedPath)
+    ? normalizedPath.replace(/^([a-zA-Z]:)(?!\/)/g, '$1/')
+    : normalizedPath
+  
+  return `safe-file://${formattedPath}`
+}
+
 
 // 初始化 Video.js
 const initVideoPlayer = () => {
@@ -83,6 +108,18 @@ const initVideoPlayer = () => {
     techOrder: ["html5"], // 只使用HTML5技术
     html5: {
       nativeTextTracks: false,
+      hls: {
+        overrideNative: true, // 覆盖原生 HLS 支持，强制使用 videojs-http-streaming
+        enableLowInitialPlaylist: true, // 开始时使用低质量流，提高加载速度
+      },
+      vhs: {
+        overrideNative: true,
+      },
+    },
+    liveui: true, // 改进直播 UI
+    liveTracker: {
+      trackingThreshold: 0.5,
+      liveTolerance: 15
     },
     sources: [
       {
@@ -90,6 +127,16 @@ const initVideoPlayer = () => {
         type: props.mimeType || "video/mp4",
       },
     ],
+    // 添加错误处理配置
+    errorDisplay: {
+      messages: {
+        1: '加载视频失败，请检查网络连接',
+        2: '网络错误，无法加载视频',
+        3: '无法解码视频，可能不支持此格式',
+        4: '视频格式不支持，请尝试不同的格式',
+        5: '加密视频无法播放',
+      }
+    },
   }
 
   // 创建播放器实例
@@ -102,43 +149,6 @@ const initVideoPlayer = () => {
   setupEventListeners()
 }
 
-// 尝试不同的 MIME 类型
-const tryDifferentMimeTypes = () => {
-  if (!player.value) return
-
-  // 常见的视频 MIME 类型
-  const mimeTypes = [
-    "video/mp4",
-    "video/webm",
-    "video/ogg",
-    "video/quicktime",
-    "video/x-matroska"
-  ]
-
-  // 先处理文件路径
-  const processedSrc = processSource(props.src);
-  
-  // 尝试每个 MIME 类型
-  for (const mimeType of mimeTypes) {
-    try {
-      player.value.src({
-        src: processedSrc,
-        type: mimeType
-      })
-      player.value.load()
-      
-      // 如果自动播放启用，尝试播放
-      if (props.autoplay) {
-        player.value.play().catch(() => {})
-      }
-      
-      // 如果成功，跳出循环
-      break
-    } catch (err) {
-      // 继续尝试下一种格式
-    }
-  }
-}
 
 // 设置事件监听器
 const setupEventListeners = () => {
@@ -164,20 +174,59 @@ const setupEventListeners = () => {
   // 错误事件
   videoElement.on("error", (error: any) => {
     const videoError = videoElement.error()
-    
+
     // 提供错误信息
     const errorInfo = {
       code: videoError?.code,
       message: videoError?.message || error?.message || "未知错误",
       src: props.src,
-      mimeType: props.mimeType
+      mimeType: props.mimeType,
     }
-    
-    // 如果是源不支持错误，尝试不同的 MIME 类型
+
+    console.error("Video error:", errorInfo)
+
+    // 如果是源不支持错误，尝试不同的处理方式
     if (videoError?.code === 4) { // MEDIA_ERR_SRC_NOT_SUPPORTED
-      setTimeout(() => tryDifferentMimeTypes(), 100)
+      console.log("Source not supported, trying file:// protocol...")
+      // 尝试使用 file:// 协议
+      setTimeout(() => {
+        if (player.value && props.src.startsWith('safe-file://')) {
+          const fileProtocolSrc = props.src.replace(/^safe-file:\/\//, 'file:///')
+          console.log("Trying with file:// protocol:", fileProtocolSrc)
+          player.value.src({
+            src: fileProtocolSrc,
+            type: props.mimeType || "video/mp4"
+          })
+          player.value.load()
+          player.value.play().catch(() => {})
+        }
+      }, 100)
+    } else if (videoError?.code === 2) { // MEDIA_ERR_NETWORK
+      console.log("Network error, trying to reload...")
+      // 网络错误，尝试重新加载
+      setTimeout(() => {
+        if (player.value) {
+          player.value.load()
+          player.value.play().catch(() => {})
+        }
+      }, 1000)
+    } else if (videoError?.code === 3) { // MEDIA_ERR_DECODE
+      console.log("Decode error, trying with different source format...")
+      // 解码错误，尝试使用不同的源格式
+      setTimeout(() => {
+        if (player.value && props.src.startsWith('safe-file://')) {
+          const fileProtocolSrc = props.src.replace(/^safe-file:\/\//, 'file:///')
+          console.log("Trying with file:// protocol after decode error:", fileProtocolSrc)
+          player.value.src({
+            src: fileProtocolSrc,
+            type: props.mimeType || "video/mp4"
+          })
+          player.value.load()
+          player.value.play().catch(() => {})
+        }
+      }, 100)
     }
-    
+
     emit("error", errorInfo)
   })
 
@@ -193,11 +242,17 @@ const setupEventListeners = () => {
 
 // 切换视频源的函数
 const changeVideoSource = (newSrc: string) => {
-  if (!player.value || !newSrc) return
+  if (!player.value) return
 
   try {
+    // 检查新源是否有效
+    if (!newSrc || newSrc.trim() === "") {
+      console.warn("视频源为空，取消切换")
+      return
+    }
+
     // 处理文件路径
-    const processedSrc = processSource(newSrc);
+    const processedSrc = processSource(newSrc)
 
     // 使用 Video.js 推荐的方式切换源
     player.value.src({
@@ -210,11 +265,16 @@ const changeVideoSource = (newSrc: string) => {
 
     // 如果需要自动播放
     if (props.autoplay) {
-      player.value.play().catch(() => {})
+      player.value.play().catch((err: any) => {
+        console.warn("自动播放失败:", err)
+      })
     }
   } catch (error) {
+    console.error("切换视频源失败:", error)
     // 如果切换失败，尝试重新初始化播放器
-    setTimeout(initVideoPlayer, 100)
+    setTimeout(() => {
+      initVideoPlayer()
+    }, 100)
   }
 }
 
@@ -246,10 +306,41 @@ const pause = () => {
   player.value?.pause()
 }
 
+const togglePlay = () => {
+  if (!player.value) {
+    console.warn("togglePlay: player is not initialized")
+    return
+  }
+  
+  console.log("togglePlay called, player paused state:", player.value.paused())
+  
+  if (player.value.paused()) {
+    try {
+      console.log("Attempting to play video")
+      player.value.play()
+        .then(() => console.log("Video playback started successfully"))
+        .catch((err: Error) => {
+          console.error("Error starting video playback:", err)
+          if (err.name === 'AbortError') {
+            console.log("Play was aborted, possibly due to a concurrent pause operation")
+          } else if (err.name === 'NotAllowedError') {
+            console.log("Playback was prevented, possibly due to autoplay restrictions")
+          }
+        })
+    } catch (err: unknown) {
+      console.error("Exception during play attempt:", err)
+    }
+  } else {
+    console.log("Pausing video")
+    player.value.pause()
+  }
+}
+
 // 暴露方法给父组件
 defineExpose({
   play,
   pause,
+  togglePlay,
   toggleFullscreen,
   togglePictureInPicture,
   player: () => player.value,
@@ -274,8 +365,16 @@ watch(
 )
 
 // 生命周期
-onMounted(initVideoPlayer)
-onUnmounted(() => player.value?.dispose())
+onMounted(() => {
+  initVideoPlayer()
+})
+
+onUnmounted(() => {
+  if (player.value) {
+    player.value.dispose()
+    player.value = null
+  }
+})
 </script>
 
 <style scoped>

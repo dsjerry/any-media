@@ -3,7 +3,6 @@
     <!-- 标题栏 -->
     <div class="title-bar">
       <div class="title-bar-content">
-        <span class="app-title">Any Player</span>
         <span v-if="currentFile" class="file-title">{{ currentFile.name }}</span>
       </div>
       <div class="title-bar-controls">
@@ -169,7 +168,9 @@ const hasNext = computed(() => currentIndex.value < playlist.value.length - 1)
 // 获取文件 MIME 类型
 const getVideoMimeType = (filename: string): string => {
   const ext = filename.split(".").pop()?.toLowerCase() || ""
-  const mimeTypes: Record<string, string> = {
+  
+  // 基本 MIME 类型映射
+  const basicMimeTypes: Record<string, string> = {
     mp4: "video/mp4",
     mp4v: "video/mp4",
     mpg4: "video/mp4",
@@ -180,21 +181,87 @@ const getVideoMimeType = (filename: string): string => {
     webm: "video/webm",
     ogv: "video/ogg",
     flv: "video/x-flv",
+    ts: "video/mp2t",
+    mts: "video/mp2t",
+    m2ts: "video/mp2t",
+    "3gp": "video/3gpp",
+    "3g2": "video/3gpp2",
   }
-  return mimeTypes[ext] || "video/mp4"
+  
+  // 高级 MIME 类型映射，包含编解码器信息
+  const advancedMimeTypes: Record<string, string[]> = {
+    mp4: [
+      "video/mp4",
+      "video/mp4; codecs=\"avc1.42E01E, mp4a.40.2\"", // H.264 + AAC
+      "video/mp4; codecs=\"hev1\"", // HEVC/H.265
+      "video/mp4; codecs=\"av01\"" // AV1
+    ],
+    webm: [
+      "video/webm",
+      "video/webm; codecs=\"vp8, vorbis\"", // VP8 + Vorbis
+      "video/webm; codecs=\"vp9, opus\"" // VP9 + Opus
+    ],
+    mkv: [
+      "video/x-matroska",
+      "video/webm", // 有时 MKV 可以作为 WebM 播放
+      ""
+    ]
+  }
+  
+  // 如果有高级 MIME 类型定义，返回第一个
+  // 实际播放时会尝试所有可能的 MIME 类型
+  if (ext in advancedMimeTypes) {
+    return advancedMimeTypes[ext][0];
+  }
+  
+  // 否则返回基本 MIME 类型
+  return basicMimeTypes[ext] || "video/mp4"
 }
 
 const getAudioMimeType = (filename: string): string => {
   const ext = filename.split(".").pop()?.toLowerCase() || ""
-  const mimeTypes: Record<string, string> = {
+  
+  // 基本 MIME 类型映射
+  const basicMimeTypes: Record<string, string> = {
     mp3: "audio/mpeg",
     wav: "audio/wav",
     flac: "audio/flac",
     aac: "audio/aac",
     ogg: "audio/ogg",
     m4a: "audio/mp4",
+    opus: "audio/opus",
+    wma: "audio/x-ms-wma",
+    aiff: "audio/aiff",
+    alac: "audio/alac",
+    ape: "audio/ape",
   }
-  return mimeTypes[ext] || "audio/mpeg"
+  
+  // 高级 MIME 类型映射，包含编解码器信息
+  const advancedMimeTypes: Record<string, string[]> = {
+    mp3: [
+      "audio/mpeg",
+      "audio/mp3",
+      ""
+    ],
+    m4a: [
+      "audio/mp4",
+      "audio/x-m4a",
+      "audio/aac"
+    ],
+    ogg: [
+      "audio/ogg",
+      "audio/ogg; codecs=\"vorbis\"",
+      "audio/ogg; codecs=\"opus\""
+    ],
+  }
+  
+  // 如果有高级 MIME 类型定义，返回第一个
+  if (ext in advancedMimeTypes) {
+    return advancedMimeTypes[ext][0];
+  }
+  
+  // 否则返回基本 MIME 类型
+  return basicMimeTypes[ext] || "audio/mpeg"
 }
 
 // 格式化时间
@@ -211,27 +278,26 @@ const loadMediaFile = async (file: MediaFile) => {
   mediaInfo.value = {}
 
   try {
-    // 使用 Electron 的 IPC 获取文件数据
-    const fileData = await window.electronAPI.getFileData(file.path)
-    if (fileData) {
-      mediaUrl.value = fileData
-    } else {
-      // 如果获取失败，回退到原始路径，并正确编码中文路径
-      const encodedPath = encodeURI(`file://${file.path}`)
-      mediaUrl.value = encodedPath
-    }
+    // 规范化路径，使用正斜杠
+    const normalizedPath = file.path.replace(/\\/g, "/")
+    
+    // 对 Windows 路径进行处理，确保驱动器字母后有正确的斜杠
+    const formattedPath = /^[a-zA-Z]:/.test(normalizedPath)
+      ? normalizedPath.replace(/^([a-zA-Z]:)(?!\/)/g, '$1/')
+      : normalizedPath
+    
+    // 直接创建 safe-file URL
+    mediaUrl.value = `safe-file://${formattedPath}`
+    console.log("创建的 URL:", mediaUrl.value)
   } catch (error) {
-    console.error("Error loading file data:", error)
-    // 正确编码中文路径
-    const encodedPath = encodeURI(`file://${file.path}`)
-    mediaUrl.value = encodedPath
+    console.error("创建文件 URL 错误:", error)
   }
 
   // 更新状态管理
   mediaStore.setCurrentFile(file)
 
   // 更新当前索引
-  const existingIndex = playlist.value.findIndex(f => f.path === file.path)
+  const existingIndex = playlist.value.findIndex((f: MediaFile) => f.path === file.path)
   currentIndex.value =
     existingIndex !== -1 ? existingIndex : playlist.value.length - 1
 }
@@ -286,15 +352,32 @@ const openFile = async () => {
 const togglePlay = () => {
   console.log("togglePlay called, current isPlaying:", isPlaying.value)
 
-  if (currentFile.value?.type === "video" && videoPlayerRef.value) {
-    console.log("Calling videoPlayerRef.togglePlay()")
-    videoPlayerRef.value.togglePlay()
-  } else if (currentFile.value?.type === "audio" && audioPlayerRef.value) {
-    console.log("Calling audioPlayerRef.togglePlay()")
-    audioPlayerRef.value.togglePlay()
-  } else {
-    // 如果没有有效的播放器，设置状态为true作为默认值
-    isPlaying.value = true
+  try {
+    if (currentFile.value?.type === "video" && videoPlayerRef.value) {
+      console.log("Calling videoPlayerRef.togglePlay()")
+      videoPlayerRef.value.togglePlay()
+      
+      // 添加事件监听器来更新播放状态
+      // 这里不直接设置 isPlaying，因为 togglePlay 可能会失败
+      // 我们在事件处理程序中更新状态
+    } else if (currentFile.value?.type === "audio" && audioPlayerRef.value) {
+      console.log("Calling audioPlayerRef.togglePlay()")
+      audioPlayerRef.value.togglePlay()
+      
+      // 同样，我们依赖事件来更新状态
+    } else if (currentFile.value?.type === "image") {
+      // 图片没有播放功能，可以切换到下一张
+      console.log("Image files cannot be played, trying to navigate to next file")
+      if (hasNext.value) {
+        nextFile()
+      }
+    } else {
+      console.warn("No valid player found for current file type:", currentFile.value?.type)
+      // 如果没有有效的播放器，我们不应该直接设置 isPlaying
+      // 而是应该提示用户没有可用的播放器
+    }
+  } catch (error: unknown) {
+    console.error("Error in togglePlay:", error)
   }
 }
 
@@ -364,8 +447,9 @@ const onVideoMetadataLoaded = (metadata: any) => {
   }
 }
 
-const onVideoTimeUpdate = (time: number) => {
+const onVideoTimeUpdate = (_time: number) => {
   // Video.js 会处理自己的时间更新
+  // 使用下划线前缀表示参数未使用
 }
 
 // AudioPlayer 事件处理函数
@@ -400,11 +484,14 @@ const onAudioMetadataLoaded = (metadata: any) => {
   }
 }
 
-const onAudioTimeUpdate = (currentTime: number) => {
+const onAudioTimeUpdate = (_currentTime: number) => {
   // Video.js 会处理自己的时间更新
+  // 使用下划线前缀表示参数未使用
 }
 
 // 返回首页时清除当前文件
+// 如果需要使用该功能，请导入 useRouter 并取消下面的注释
+/*
 const goBack = () => {
   mediaStore.clearCurrentFile()
   // 停止当前播放
@@ -420,6 +507,7 @@ const goBack = () => {
   // 跳转到首页
   // 这里可以使用 router.push('/') 但需要导入 useRouter
 }
+*/
 
 // 监听播放状态
 const setupMediaListeners = () => {
@@ -479,12 +567,10 @@ onUnmounted(() => {
 <style scoped>
 /* 毛玻璃风格 */
 .app-container {
-  width: 100vw;
-  height: 100vh;
+  height: 100%;
   background: linear-gradient(135deg, #1a1a1a 0%, #2d2d2d 100%);
   display: flex;
   flex-direction: column;
-  overflow: hidden;
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
   position: relative;
 }
@@ -580,9 +666,11 @@ onUnmounted(() => {
   backdrop-filter: blur(10px);
   -webkit-backdrop-filter: blur(10px);
   position: relative;
-  overflow: hidden;
+  overflow-y: auto;
   z-index: 1;
   min-height: 0; /* 允许flex收缩 */
+  width: 100%;
+  height: 100%;
 }
 
 /* 空状态 */
@@ -679,7 +767,7 @@ onUnmounted(() => {
 .video-container {
   width: 100%;
   height: 100%;
-  min-height: 300px; /* 确保有足够空间显示控件 */
+  min-height: 400px; /* 确保有足够空间显示控件 */
   position: relative;
 }
 
