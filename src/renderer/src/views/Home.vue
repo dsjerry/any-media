@@ -200,8 +200,6 @@ const openRecentFile = (file: MediaFile) => {
   font-size: 64px;
   margin-bottom: 20px;
   background: linear-gradient(135deg, var(--accent-primary), var(--accent-secondary));
-  -webkit-background-clip: text;
-  -webkit-text-fill-color: transparent;
   background-clip: text;
   animation: float 4s ease-in-out infinite;
 }

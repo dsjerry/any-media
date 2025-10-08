@@ -4,7 +4,7 @@
       <nav class="nav-container">
         <div class="nav-content">
           <div class="brand-section">
-            <h1 class="app-title">Any Player</h1>
+            <!-- <h1 class="app-title">Any Player</h1> -->
           </div>
           <div class="nav-links">
             <router-link

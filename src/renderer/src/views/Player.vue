@@ -79,6 +79,10 @@
           :src="mediaUrl"
           :alt="currentFile.name"
           class="image-viewer"
+          :style="{
+            transform: `scale(${imageScale}) translate(${imagePosition.x}px, ${imagePosition.y}px)`,
+            cursor: isDragging ? 'grabbing' : 'grab'
+          }"
           @load="onMediaLoaded"
           @error="onMediaError"
         />
@@ -121,6 +125,15 @@
         >
           ⏭️
         </button>
+        <!-- 图片缩放重置按钮 -->
+        <button
+          v-if="currentFile.type === 'image'"
+          class="control-btn"
+          @click="resetImageTransform"
+          title="重置缩放"
+        >
+          🔍
+        </button>
       </div>
     </div>
 
@@ -154,6 +167,12 @@ const isPlaying = ref(false)
 const isShowControlBar = ref(false)
 const mediaInfo = ref<MediaInfo>({})
 const currentIndex = ref(-1)
+
+// 图片缩放相关状态
+const imageScale = ref(1)
+const imagePosition = ref({ x: 0, y: 0 })
+const isDragging = ref(false)
+const dragStart = ref({ x: 0, y: 0 })
 
 const videoRef = ref<HTMLVideoElement>()
 const audioRef = ref<HTMLAudioElement>()
@@ -612,6 +631,63 @@ watch(
   { immediate: true }
 )
 
+// 图片缩放功能相关函数
+const resetImageTransform = () => {
+  imageScale.value = 1
+  imagePosition.value = { x: 0, y: 0 }
+}
+
+const handleWheel = (e: WheelEvent) => {
+  if (currentFile.value?.type !== 'image') return
+  
+  e.preventDefault()
+  
+  const delta = e.deltaY > 0 ? -0.1 : 0.1
+  const newScale = Math.max(0.1, Math.min(5, imageScale.value + delta))
+  
+  // 以鼠标位置为中心进行缩放
+  if (imageRef.value) {
+    const rect = imageRef.value.getBoundingClientRect()
+    const x = e.clientX - rect.left
+    const y = e.clientY - rect.top
+    
+    const scaleRatio = newScale / imageScale.value
+    
+    imagePosition.value.x -= (x - imagePosition.value.x) * (scaleRatio - 1)
+    imagePosition.value.y -= (y - imagePosition.value.y) * (scaleRatio - 1)
+  }
+  
+  imageScale.value = newScale
+}
+
+const handleMouseDown = (e: MouseEvent) => {
+  if (currentFile.value?.type !== 'image') return
+  
+  isDragging.value = true
+  dragStart.value = { x: e.clientX - imagePosition.value.x, y: e.clientY - imagePosition.value.y }
+  if (imageRef.value) {
+    imageRef.value.style.cursor = 'grabbing'
+  }
+}
+
+const handleMouseMove = (e: MouseEvent) => {
+  if (currentFile.value?.type !== 'image' || !isDragging.value) return
+  
+  imagePosition.value = {
+    x: e.clientX - dragStart.value.x,
+    y: e.clientY - dragStart.value.y
+  }
+}
+
+const handleMouseUp = () => {
+  if (currentFile.value?.type !== 'image') return
+  
+  isDragging.value = false
+  if (imageRef.value) {
+    imageRef.value.style.cursor = 'grab'
+  }
+}
+
 onMounted(async () => {
   setupMediaListeners()
 
@@ -630,6 +706,15 @@ onMounted(async () => {
     // 窗口取消最大化时的处理逻辑
     handleWindowUnmaximize()
   })
+  
+  // 添加图片查看器的事件监听器
+  if (imageRef.value) {
+    imageRef.value.addEventListener('wheel', handleWheel as EventListener)
+    imageRef.value.addEventListener('mousedown', handleMouseDown)
+    imageRef.value.addEventListener('mousemove', handleMouseMove)
+    imageRef.value.addEventListener('mouseup', handleMouseUp)
+    imageRef.value.addEventListener('mouseleave', handleMouseUp)
+  }
 })
 
 onUnmounted(() => {
@@ -641,6 +726,15 @@ onUnmounted(() => {
   if (audioRef.value) {
     audioRef.value.removeEventListener("play", () => (isPlaying.value = true))
     audioRef.value.removeEventListener("pause", () => (isPlaying.value = false))
+  }
+  
+  // 清理图片查看器的事件监听器
+  if (imageRef.value) {
+    imageRef.value.removeEventListener('wheel', handleWheel as EventListener)
+    imageRef.value.removeEventListener('mousedown', handleMouseDown)
+    imageRef.value.removeEventListener('mousemove', handleMouseMove)
+    imageRef.value.removeEventListener('mouseup', handleMouseUp)
+    imageRef.value.removeEventListener('mouseleave', handleMouseUp)
   }
   
   // 清理窗口事件监听器

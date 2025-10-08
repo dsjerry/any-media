@@ -193,7 +193,10 @@ const stats = computed(() => mediaLibraryStore.getTypeStats)
 const selectedFolder = computed(() => mediaLibraryStore.getSelectedFolder)
 
 const filteredItems = computed(() => {
-  let items = mediaLibraryStore.getSelectedFolderItems
+  // 当没有选中特定文件夹时，显示所有项目；否则显示选中文件夹的项目
+  let items = mediaLibraryStore.selectedFolderId 
+    ? mediaLibraryStore.getSelectedFolderItems 
+    : mediaLibraryStore.items
 
   // 应用类型过滤
   if (typeFilter.value) {
