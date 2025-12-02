@@ -16,7 +16,7 @@
     </div>
 
     <!-- 主播放区域 -->
-    <div class="player-area">
+    <div class="player-area" ref="playerAreaRef">
       <div v-if="!currentFile" class="empty-state">
         <div class="empty-icon">🎬</div>
         <div class="empty-text">选择一个媒体文件开始播放</div>
@@ -34,12 +34,9 @@
           :mimeType="getVideoMimeType(currentFile.name)"
           :autoplay="false"
           @ready="onVideoPlayerReady"
-          @play="onVideoPlay"
-          @pause="onVideoPause"
           @ended="onVideoEnded"
           @error="onVideoError"
           @loadedmetadata="onVideoMetadataLoaded"
-          @timeupdate="onVideoTimeUpdate"
         />
       </div>
 
@@ -55,19 +52,11 @@
           </div>
         </div>
         <div class="audio-player-wrapper">
-          <AudioPlayer
-            ref="audioPlayerRef"
+          <audio
+            ref="audioRef"
             :src="mediaUrl"
             :title="currentFile.name"
-            :mimeType="getAudioMimeType(currentFile.name)"
-            :autoplay="false"
-            @ready="onAudioPlayerReady"
-            @play="onAudioPlay"
-            @pause="onAudioPause"
-            @ended="onAudioEnded"
-            @error="onAudioError"
-            @loadedmetadata="onAudioMetadataLoaded"
-            @timeupdate="onAudioTimeUpdate"
+            controls
           />
         </div>
       </div>
@@ -88,55 +77,6 @@
         />
       </div>
     </div>
-
-    <!-- 控制栏 -->
-    <div v-if="currentFile && isShowControlBar" class="control-bar">
-      <div class="media-info">
-        <div class="media-title">{{ currentFile.name }}</div>
-        <div class="media-path">{{ currentFile.path }}</div>
-        <div v-if="mediaInfo" class="media-details">
-          <span v-if="mediaInfo.duration">时长: {{ formatTime(mediaInfo.duration) }}</span>
-          <span v-if="mediaInfo.dimensions" class="separator">•</span>
-          <span v-if="mediaInfo.dimensions">尺寸: {{ mediaInfo.dimensions.width }}x{{ mediaInfo.dimensions.height }}</span>
-        </div>
-      </div>
-
-      <div class="playback-controls">
-        <button
-          class="control-btn"
-          @click="previousFile"
-          :disabled="!hasPrevious"
-          title="上一个"
-        >
-          ⏮️
-        </button>
-        <button
-          class="control-btn play-btn"
-          @click="togglePlay"
-          :title="isPlaying ? '暂停' : '播放'"
-        >
-          {{ isPlaying ? '⏸️' : '▶️' }}
-        </button>
-        <button
-          class="control-btn"
-          @click="nextFile"
-          :disabled="!hasNext"
-          title="下一个"
-        >
-          ⏭️
-        </button>
-        <!-- 图片缩放重置按钮 -->
-        <button
-          v-if="currentFile.type === 'image'"
-          class="control-btn"
-          @click="resetImageTransform"
-          title="重置缩放"
-        >
-          🔍
-        </button>
-      </div>
-    </div>
-
     <!-- 加载状态 -->
     <div v-if="isLoading" class="loading-overlay">
       <div class="loading-content">
@@ -148,10 +88,9 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, onUnmounted, watch } from "vue"
+import { ref, computed, onMounted, watch } from "vue"
 import { useMediaStore } from "@/stores/media"
 import VideoPlayer from "@/components/VideoPlayer.vue"
-import AudioPlayer from "@/components/AudioPlayer.vue"
 import type { MediaFile } from "@/stores/media"
 
 interface MediaInfo {
@@ -163,8 +102,6 @@ const mediaStore = useMediaStore()
 const currentFile = ref<MediaFile | null>(null)
 const mediaUrl = ref<string>("")
 const isLoading = ref(false)
-const isPlaying = ref(false)
-const isShowControlBar = ref(false)
 const mediaInfo = ref<MediaInfo>({})
 const currentIndex = ref(-1)
 
@@ -174,21 +111,19 @@ const imagePosition = ref({ x: 0, y: 0 })
 const isDragging = ref(false)
 const dragStart = ref({ x: 0, y: 0 })
 
-const videoRef = ref<HTMLVideoElement>()
-const audioRef = ref<HTMLAudioElement>()
+const playerAreaRef = ref<HTMLDivElement | null>(null)
 const imageRef = ref<HTMLImageElement>()
 const videoPlayerRef = ref<InstanceType<typeof VideoPlayer>>()
-const audioPlayerRef = ref<InstanceType<typeof AudioPlayer>>()
+const audioRef = ref<HTMLAudioElement | null>(null)
 
 // 计算属性
 const playlist = computed(() => mediaStore.playlist)
-const hasPrevious = computed(() => currentIndex.value > 0)
 const hasNext = computed(() => currentIndex.value < playlist.value.length - 1)
 
 // 获取文件 MIME 类型
 const getVideoMimeType = (filename: string): string => {
   const ext = filename.split(".").pop()?.toLowerCase() || ""
-  
+
   // 基本 MIME 类型映射
   const basicMimeTypes: Record<string, string> = {
     mp4: "video/mp4",
@@ -207,7 +142,7 @@ const getVideoMimeType = (filename: string): string => {
     "3gp": "video/3gpp",
     "3g2": "video/3gpp2",
   }
-  
+
   // 高级 MIME 类型映射，包含编解码器信息
   const advancedMimeTypes: Record<string, string[]> = {
     mp4: [
@@ -227,90 +162,48 @@ const getVideoMimeType = (filename: string): string => {
       ""
     ]
   }
-  
+
   // 如果有高级 MIME 类型定义，返回第一个
   // 实际播放时会尝试所有可能的 MIME 类型
   if (ext in advancedMimeTypes) {
     return advancedMimeTypes[ext][0];
   }
-  
+
   // 否则返回基本 MIME 类型
   return basicMimeTypes[ext] || "video/mp4"
 }
 
-const getAudioMimeType = (filename: string): string => {
-  const ext = filename.split(".").pop()?.toLowerCase() || ""
-  
-  // 基本 MIME 类型映射
-  const basicMimeTypes: Record<string, string> = {
-    mp3: "audio/mpeg",
-    wav: "audio/wav",
-    flac: "audio/flac",
-    aac: "audio/aac",
-    ogg: "audio/ogg",
-    m4a: "audio/mp4",
-    opus: "audio/opus",
-    wma: "audio/x-ms-wma",
-    aiff: "audio/aiff",
-    alac: "audio/alac",
-    ape: "audio/ape",
+// 格式化时间（用于显示音频时长）
+const formatTime = (seconds?: number): string => {
+  if (!Number.isFinite(seconds) || seconds === undefined || seconds < 0) {
+    return "00:00"
   }
-  
-  // 高级 MIME 类型映射，包含编解码器信息
-  const advancedMimeTypes: Record<string, string[]> = {
-    mp3: [
-      "audio/mpeg",
-      "audio/mp3",
-      ""
-    ],
-    m4a: [
-      "audio/mp4",
-      "audio/x-m4a",
-      "audio/aac"
-    ],
-    ogg: [
-      "audio/ogg",
-      "audio/ogg; codecs=\"vorbis\"",
-      "audio/ogg; codecs=\"opus\""
-    ],
-  }
-  
-  // 如果有高级 MIME 类型定义，返回第一个
-  if (ext in advancedMimeTypes) {
-    return advancedMimeTypes[ext][0];
-  }
-  
-  // 否则返回基本 MIME 类型
-  return basicMimeTypes[ext] || "audio/mpeg"
-}
-
-// 格式化时间
-const formatTime = (seconds: number): string => {
   const mins = Math.floor(seconds / 60)
   const secs = Math.floor(seconds % 60)
   return `${mins}:${secs.toString().padStart(2, "0")}`
 }
 
-// 加载媒体文件
+// 加载媒体文件 - 修复版本，使用 base64 转换 API
 const loadMediaFile = async (file: MediaFile) => {
   currentFile.value = file
   isLoading.value = true
   mediaInfo.value = {}
 
   try {
-    // 规范化路径，使用正斜杠
-    const normalizedPath = file.path.replace(/\\/g, "/")
-    
-    // 对 Windows 路径进行处理，确保驱动器字母后有正确的斜杠
-    const formattedPath = /^[a-zA-Z]:/.test(normalizedPath)
-      ? normalizedPath.replace(/^([a-zA-Z]:)(?!\/)/g, '$1/')
-      : normalizedPath
-    
-    // 直接创建 safe-file URL
-    mediaUrl.value = `safe-file://${formattedPath}`
-    console.log("创建的 URL:", mediaUrl.value)
+    // 使用统一的 getFileData API 来处理所有文件类型
+    console.log("调用 getFileData API:", file.path)
+    const dataUrl = await window.electronAPI.getFileData(file.path)
+
+    if (dataUrl) {
+      mediaUrl.value = dataUrl
+      console.log("文件加载成功:", file.name, "URL:", mediaUrl.value?.substring(0, 50) + "...")
+    } else {
+      console.error("文件加载失败:", file.name)
+      mediaUrl.value = ""
+    }
   } catch (error) {
-    console.error("创建文件 URL 错误:", error)
+    console.error("加载媒体文件错误:", error)
+    mediaUrl.value = ""
   }
 
   // 更新状态管理
@@ -325,15 +218,6 @@ const loadMediaFile = async (file: MediaFile) => {
 // 媒体加载完成
 const onMediaLoaded = () => {
   isLoading.value = false
-
-  if (currentFile.value?.type === "video" && videoRef.value) {
-    mediaInfo.value.duration = videoRef.value?.duration || 0
-    mediaInfo.value.dimensions = {
-      width: videoRef.value?.videoWidth || 0,
-      height: videoRef.value?.videoHeight || 0,
-    }
-  }
-  // 音频播放器现在使用AudioPlayer组件，在onAudioMetadataLoaded中处理
 }
 
 // 媒体加载错误
@@ -368,46 +252,6 @@ const openFile = async () => {
   }
 }
 
-// 播放控制
-const togglePlay = () => {
-  console.log("togglePlay called, current isPlaying:", isPlaying.value)
-
-  try {
-    if (currentFile.value?.type === "video" && videoPlayerRef.value) {
-      console.log("Calling videoPlayerRef.togglePlay()")
-      videoPlayerRef.value.togglePlay()
-      
-      // 添加事件监听器来更新播放状态
-      // 这里不直接设置 isPlaying，因为 togglePlay 可能会失败
-      // 我们在事件处理程序中更新状态
-    } else if (currentFile.value?.type === "audio" && audioPlayerRef.value) {
-      console.log("Calling audioPlayerRef.togglePlay()")
-      audioPlayerRef.value.togglePlay()
-      
-      // 同样，我们依赖事件来更新状态
-    } else if (currentFile.value?.type === "image") {
-      // 图片没有播放功能，可以切换到下一张
-      console.log("Image files cannot be played, trying to navigate to next file")
-      if (hasNext.value) {
-        nextFile()
-      }
-    } else {
-      console.warn("No valid player found for current file type:", currentFile.value?.type)
-      // 如果没有有效的播放器，我们不应该直接设置 isPlaying
-      // 而是应该提示用户没有可用的播放器
-    }
-  } catch (error: unknown) {
-    console.error("Error in togglePlay:", error)
-  }
-}
-
-// 文件切换
-const previousFile = () => {
-  if (hasPrevious.value) {
-    loadMediaFile(playlist.value[currentIndex.value - 1])
-  }
-}
-
 const nextFile = () => {
   if (hasNext.value) {
     loadMediaFile(playlist.value[currentIndex.value + 1])
@@ -416,7 +260,7 @@ const nextFile = () => {
 
 // 全屏切换
 const toggleFullscreen = () => {
-  const element = videoRef.value || imageRef.value
+  const element = playerAreaRef.value || imageRef.value
   if (element) {
     if (!document.fullscreenElement) {
       element.requestFullscreen()
@@ -427,23 +271,12 @@ const toggleFullscreen = () => {
 }
 
 // VideoPlayer 事件处理函数
-const onVideoPlayerReady = (player: any) => {
-  console.log("VideoPlayer 就绪:", player)
+const onVideoPlayerReady = (_player: any) => {
+  console.log("VideoPlayer 就绪")
   isLoading.value = false
 }
 
-const onVideoPlay = () => {
-  console.log("onVideoPlay called, setting isPlaying to true")
-  isPlaying.value = true
-}
-
-const onVideoPause = () => {
-  console.log("onVideoPause called, setting isPlaying to false")
-  isPlaying.value = false
-}
-
 const onVideoEnded = () => {
-  isPlaying.value = false
   // 自动播放下一个
   if (hasNext.value) {
     nextFile()
@@ -467,26 +300,7 @@ const onVideoMetadataLoaded = (metadata: any) => {
   }
 }
 
-const onVideoTimeUpdate = (_time: number) => {
-  // Video.js 会处理自己的时间更新
-  // 使用下划线前缀表示参数未使用
-}
-
-// AudioPlayer 事件处理函数
-const onAudioPlayerReady = (player: any) => {
-  console.log("AudioPlayer 就绪:", player)
-}
-
-const onAudioPlay = () => {
-  isPlaying.value = true
-}
-
-const onAudioPause = () => {
-  isPlaying.value = false
-}
-
 const onAudioEnded = () => {
-  isPlaying.value = false
   // 自动播放下一个
   if (hasNext.value) {
     nextFile()
@@ -497,16 +311,11 @@ const onAudioError = (error: any) => {
   console.error("AudioPlayer 错误:", error)
 }
 
-const onAudioMetadataLoaded = (metadata: any) => {
-  console.log("AudioPlayer 元数据:", metadata)
+const onAudioMetadataLoaded = (event: Event) => {
+  const element = event.target as HTMLAudioElement
   mediaInfo.value = {
-    duration: metadata.duration,
+    duration: element.duration,
   }
-}
-
-const onAudioTimeUpdate = (_currentTime: number) => {
-  // Video.js 会处理自己的时间更新
-  // 使用下划线前缀表示参数未使用
 }
 
 // 处理窗口最大化事件
@@ -542,17 +351,17 @@ const adjustPlayerForMaximize = () => {
     // 获取屏幕尺寸
     const screenWidth = window.screen.width
     const screenHeight = window.screen.height
-    
+
     // 设置最大宽高（可以根据需要调整这些值）
     const maxWidth = Math.min(screenWidth * 0.9, 1920) // 最大宽度为屏幕宽度的90%或1920px
     const maxHeight = Math.min(screenHeight * 0.8, 1080) // 最大高度为屏幕高度的80%或1080px
-    
+
     // 应用样式
     playerArea.style.maxWidth = `${maxWidth}px`
     playerArea.style.maxHeight = `${maxHeight}px`
     playerArea.style.margin = '0 auto' // 居中显示
   }
-  
+
   // 同样调整视频容器
   if (videoContainer) {
     videoContainer.style.maxWidth = '100%'
@@ -570,52 +379,11 @@ const adjustPlayerForUnmaximize = () => {
     playerArea.style.maxHeight = ''
     playerArea.style.margin = ''
   }
-  
+
   // 恢复视频容器的默认样式
   if (videoContainer) {
     videoContainer.style.maxWidth = ''
     videoContainer.style.maxHeight = ''
-  }
-}
-
-// 返回首页时清除当前文件
-// 如果需要使用该功能，请导入 useRouter 并取消下面的注释
-/*
-const goBack = () => {
-  mediaStore.clearCurrentFile()
-  // 停止当前播放
-  if (videoPlayerRef.value) {
-    videoPlayerRef.value.pause()
-  }
-  if (audioPlayerRef.value) {
-    audioPlayerRef.value.pause()
-  }
-  if (audioRef.value) {
-    audioRef.value.pause()
-  }
-  // 跳转到首页
-  // 这里可以使用 router.push('/') 但需要导入 useRouter
-}
-*/
-
-// 监听播放状态
-const setupMediaListeners = () => {
-  if (videoRef.value) {
-    videoRef.value.addEventListener("play", () => (isPlaying.value = true))
-    videoRef.value.addEventListener("pause", () => (isPlaying.value = false))
-    videoRef.value.addEventListener("ended", () => {
-      isPlaying.value = false
-      if (hasNext.value) nextFile()
-    })
-  }
-
-  if (audioRef.value) {
-    audioRef.value.addEventListener("play", () => (isPlaying.value = true))
-    audioRef.value.addEventListener("pause", () => (isPlaying.value = false))
-    audioRef.value.addEventListener("ended", () => {
-      isPlaying.value = false
-      if (hasNext.value) nextFile()
-    })
   }
 }
 
@@ -639,30 +407,30 @@ const resetImageTransform = () => {
 
 const handleWheel = (e: WheelEvent) => {
   if (currentFile.value?.type !== 'image') return
-  
+
   e.preventDefault()
-  
+
   const delta = e.deltaY > 0 ? -0.1 : 0.1
   const newScale = Math.max(0.1, Math.min(5, imageScale.value + delta))
-  
+
   // 以鼠标位置为中心进行缩放
   if (imageRef.value) {
     const rect = imageRef.value.getBoundingClientRect()
     const x = e.clientX - rect.left
     const y = e.clientY - rect.top
-    
+
     const scaleRatio = newScale / imageScale.value
-    
+
     imagePosition.value.x -= (x - imagePosition.value.x) * (scaleRatio - 1)
     imagePosition.value.y -= (y - imagePosition.value.y) * (scaleRatio - 1)
   }
-  
+
   imageScale.value = newScale
 }
 
 const handleMouseDown = (e: MouseEvent) => {
   if (currentFile.value?.type !== 'image') return
-  
+
   isDragging.value = true
   dragStart.value = { x: e.clientX - imagePosition.value.x, y: e.clientY - imagePosition.value.y }
   if (imageRef.value) {
@@ -672,7 +440,7 @@ const handleMouseDown = (e: MouseEvent) => {
 
 const handleMouseMove = (e: MouseEvent) => {
   if (currentFile.value?.type !== 'image' || !isDragging.value) return
-  
+
   imagePosition.value = {
     x: e.clientX - dragStart.value.x,
     y: e.clientY - dragStart.value.y
@@ -681,7 +449,7 @@ const handleMouseMove = (e: MouseEvent) => {
 
 const handleMouseUp = () => {
   if (currentFile.value?.type !== 'image') return
-  
+
   isDragging.value = false
   if (imageRef.value) {
     imageRef.value.style.cursor = 'grab'
@@ -689,8 +457,6 @@ const handleMouseUp = () => {
 }
 
 onMounted(async () => {
-  setupMediaListeners()
-
   // 检查是否有从首页传递过来的文件
   if (mediaStore.currentFile && !currentFile.value) {
     await loadMediaFile(mediaStore.currentFile)
@@ -706,7 +472,7 @@ onMounted(async () => {
     // 窗口取消最大化时的处理逻辑
     handleWindowUnmaximize()
   })
-  
+
   // 添加图片查看器的事件监听器
   if (imageRef.value) {
     imageRef.value.addEventListener('wheel', handleWheel as EventListener)
@@ -715,31 +481,6 @@ onMounted(async () => {
     imageRef.value.addEventListener('mouseup', handleMouseUp)
     imageRef.value.addEventListener('mouseleave', handleMouseUp)
   }
-})
-
-onUnmounted(() => {
-  // 清理事件监听器
-  if (videoRef.value) {
-    videoRef.value.removeEventListener("play", () => (isPlaying.value = true))
-    videoRef.value.removeEventListener("pause", () => (isPlaying.value = false))
-  }
-  if (audioRef.value) {
-    audioRef.value.removeEventListener("play", () => (isPlaying.value = true))
-    audioRef.value.removeEventListener("pause", () => (isPlaying.value = false))
-  }
-  
-  // 清理图片查看器的事件监听器
-  if (imageRef.value) {
-    imageRef.value.removeEventListener('wheel', handleWheel as EventListener)
-    imageRef.value.removeEventListener('mousedown', handleMouseDown)
-    imageRef.value.removeEventListener('mousemove', handleMouseMove)
-    imageRef.value.removeEventListener('mouseup', handleMouseUp)
-    imageRef.value.removeEventListener('mouseleave', handleMouseUp)
-  }
-  
-  // 清理窗口事件监听器
-  window.electronAPI.removeAllListeners('window-maximize')
-  window.electronAPI.removeAllListeners('window-unmaximize')
 })
 </script>
 
@@ -963,10 +704,18 @@ onUnmounted(() => {
   position: relative;
   display: flex;
   flex-direction: column;
-  align-items: center;
+  align-items: stretch;
   justify-content: center;
   box-sizing: border-box;
   overflow: hidden;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+.video-container :deep(.video-player-container) {
+  flex: 1 1 auto;
+  width: 100%;
+  height: 100%;
 }
 
 /* 全屏模式下的视频容器 */
@@ -1128,6 +877,51 @@ onUnmounted(() => {
 
 .separator {
   color: var(--text-tertiary);
+}
+
+.progress-section {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  width: 240px;
+}
+
+.time-display {
+  display: flex;
+  justify-content: space-between;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.seek-slider {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 100%;
+  height: 4px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.2);
+  outline: none;
+  cursor: pointer;
+}
+
+.seek-slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--accent-primary);
+  box-shadow: 0 0 10px rgba(0, 212, 255, 0.6);
+  border: 2px solid #fff;
+}
+
+.seek-slider::-moz-range-thumb {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--accent-primary);
+  border: 2px solid #fff;
+  box-shadow: 0 0 10px rgba(0, 212, 255, 0.6);
 }
 
 /* 播放控制 */

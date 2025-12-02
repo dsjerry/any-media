@@ -35,7 +35,7 @@ function createWindow() {
   })
 
   const startUrl = isDev
-    ? "http://localhost:5173"
+    ? "http://localhost:4000"
     : `file://${path.join(__dirname, "../renderer/index.html")}`
 
   mainWindow.loadURL(startUrl)

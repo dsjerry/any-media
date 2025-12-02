@@ -53,11 +53,23 @@
     </div>
 
     <!-- 主要内容区域 -->
-    <div class="library-content">
+    <div :class="['library-content', { 'sidebar-collapsed': isFoldersCollapsed }]">
       <!-- 文件夹列表 -->
-      <div class="folders-section">
-        <h2 class="section-title">文件夹</h2>
-        <div class="folders-list">
+      <div :class="['folders-section', { collapsed: isFoldersCollapsed }]">
+        <div class="folders-header">
+          <h2 class="section-title">文件夹</h2>
+          <button
+            class="sidebar-toggle"
+            type="button"
+            @click="toggleFoldersPanel"
+            :aria-expanded="!isFoldersCollapsed"
+            :title="isFoldersCollapsed ? '展开文件夹面板' : '收起文件夹面板'"
+          >
+            <span class="toggle-icon">{{ isFoldersCollapsed ? '▶️' : '◀️' }}</span>
+            <span class="toggle-text">{{ isFoldersCollapsed ? '展开' : '收起' }}</span>
+          </button>
+        </div>
+        <div class="folders-list" v-show="!isFoldersCollapsed">
           <div
             v-for="folder in mediaLibraryStore.folders"
             :key="folder.id"
@@ -100,15 +112,21 @@
       <!-- 文件列表 -->
       <div class="files-section">
         <div class="files-header">
-          <h2 class="section-title">
-            {{ selectedFolder ? selectedFolder.name : '所有文件' }}
-          </h2>
+          <div class="section-heading">
+            <h2 class="section-title">
+              {{ selectedFolder ? selectedFolder.name : '所有文件' }}
+            </h2>
+            <p class="section-subtitle">
+              {{ filteredItems.length }} 个文件
+              <span v-if="selectionCount">· {{ selectionCount }} 个已选</span>
+            </p>
+          </div>
           <div class="files-controls">
             <div class="search-box">
               <input
                 v-model="searchQuery"
                 type="text"
-                placeholder="搜索文件..."
+                placeholder="搜索文件、路径或扩展名..."
                 class="glass-input"
               />
             </div>
@@ -118,48 +136,180 @@
               <option value="audio">音频</option>
               <option value="image">图片</option>
             </select>
+            <select v-model="sortOption" class="glass-input">
+              <option value="name">名称</option>
+              <option value="date">最近修改</option>
+              <option value="size">文件大小</option>
+            </select>
+            <div class="view-toggle" role="group" aria-label="视图模式">
+              <button
+                type="button"
+                class="toggle-btn"
+                :class="{ active: viewMode === 'grid' }"
+                @click="viewMode = 'grid'"
+                title="网格视图"
+              >
+                ⬚
+              </button>
+              <button
+                type="button"
+                class="toggle-btn"
+                :class="{ active: viewMode === 'list' }"
+                @click="viewMode = 'list'"
+                title="列表视图"
+              >
+                ≣
+              </button>
+            </div>
+            <button @click="refreshLibrary" class="icon-btn" :disabled="mediaLibraryStore.isLoading" title="刷新">
+              🔄
+            </button>
           </div>
         </div>
 
-        <div class="files-grid">
-          <div
-            v-for="item in filteredItems"
-            :key="item.id"
-            class="file-item glass-card"
-            :class="{ selected: mediaLibraryStore.selectedItemIds.has(item.id) }"
-            @click="toggleFileSelection(item.id)"
-            @dblclick="playItem(item)"
-          >
-            <div class="file-preview">
-              <div class="file-icon" :class="item.type">
-                {{ getFileIcon(item.type) }}
+        <div class="selection-toolbar glass-card" v-if="selectionCount > 0">
+          <div class="selection-info">
+            <span class="selection-count">{{ selectionCount }}</span>
+            <span>个文件已选</span>
+          </div>
+          <div class="selection-actions">
+            <button class="glass-btn secondary" @click="selectAllVisible">全选可见</button>
+            <button class="glass-btn secondary" @click="clearSelection">清除选择</button>
+            <button class="glass-btn primary" @click="playSelection">播放</button>
+            <button class="glass-btn danger" @click="removeSelection">移除</button>
+          </div>
+        </div>
+
+        <div class="files-body">
+          <div :class="['files-grid', viewMode]">
+            <div
+              v-for="(item, index) in filteredItems"
+              :key="item.id"
+              class="file-item glass-card"
+              :class="{ selected: mediaLibraryStore.selectedItemIds.has(item.id), list: viewMode === 'list' }"
+              @click="handleFileClick($event, item, index)"
+              @dblclick="playItem(item)"
+            >
+              <div class="file-preview">
+                <div class="file-icon" :class="item.type">
+                  {{ getFileIcon(item.type) }}
+                </div>
+              </div>
+              <div class="file-info">
+                <div class="file-name" :title="item.name">{{ item.name }}</div>
+                <div class="file-meta">
+                  <span class="file-size">{{ formatFileSize(item.size) }}</span>
+                  <span class="separator">•</span>
+                  <span class="file-time">{{ formatTime(item.lastModified) }}</span>
+                </div>
+                <div class="file-extra" v-if="viewMode === 'list'">
+                  <span>{{ getFolderName(item.folderId) }}</span>
+                  <span class="separator">•</span>
+                  <span>{{ item.path }}</span>
+                </div>
+              </div>
+              <div class="file-actions">
+                <button @click.stop="playItem(item)" class="icon-btn" title="播放">
+                  ▶️
+                </button>
+                <button @click.stop="removeFile(item.id)" class="icon-btn danger" title="移除">
+                  🗑️
+                </button>
               </div>
             </div>
-            <div class="file-info">
-              <div class="file-name" :title="item.name">{{ item.name }}</div>
-              <div class="file-meta">
-                <span class="file-size">{{ formatFileSize(item.size) }}</span>
-                <span class="separator">•</span>
-                <span class="file-time">{{ formatTime(item.lastModified) }}</span>
+
+            <!-- 空状态 -->
+            <div v-if="filteredItems.length === 0" class="empty-state">
+              <div class="empty-icon">🔍</div>
+              <div class="empty-text">
+                {{ searchQuery ? '没有找到匹配的文件' : '这个文件夹是空的' }}
               </div>
-            </div>
-            <div class="file-actions">
-              <button @click.stop="playItem(item)" class="icon-btn" title="播放">
-                ▶️
-              </button>
-              <button @click.stop="removeFile(item.id)" class="icon-btn danger" title="移除">
-                🗑️
-              </button>
             </div>
           </div>
 
-          <!-- 空状态 -->
-          <div v-if="filteredItems.length === 0" class="empty-state">
-            <div class="empty-icon">🔍</div>
-            <div class="empty-text">
-              {{ searchQuery ? '没有找到匹配的文件' : '这个文件夹是空的' }}
+          <aside class="preview-pane glass-card" v-if="primarySelection">
+            <div class="preview-header">
+              <div class="preview-icon" :class="primarySelection.type">
+                {{ getFileIcon(primarySelection.type) }}
+              </div>
+              <div class="preview-titles">
+                <h3 class="preview-title">{{ primarySelection.name }}</h3>
+                <p class="preview-path" :title="primarySelection.path">{{ primarySelection.path }}</p>
+              </div>
             </div>
-          </div>
+            <div v-if="isImageSelected" class="preview-media">
+              <div class="image-preview">
+                <div class="image-stage" :class="{ loading: isImageLoading }">
+                  <div v-if="isImageLoading" class="image-state loading">
+                    <div class="loading-spinner small"></div>
+                    <span>图片加载中...</span>
+                  </div>
+                  <div v-else-if="imagePreviewError" class="image-state error">
+                    {{ imagePreviewError }}
+                  </div>
+                  <img
+                    v-else-if="previewImageUrl"
+                    :src="previewImageUrl"
+                    :alt="primarySelection?.name"
+                    :style="{ transform: `scale(${imageZoom / 100})` }"
+                  />
+                  <div v-else class="image-state empty">暂无预览</div>
+                </div>
+              </div>
+              <div class="image-controls">
+                <label class="control-label" for="imageZoomRange">缩放</label>
+                <div class="zoom-control">
+                  <input
+                    id="imageZoomRange"
+                    type="range"
+                    min="50"
+                    max="200"
+                    step="10"
+                    v-model.number="imageZoom"
+                  />
+                  <span class="zoom-value">{{ imageZoom }}%</span>
+                </div>
+                <div class="image-actions">
+                  <button class="glass-btn secondary" type="button" @click="resetImageZoom">重置缩放</button>
+                  <button class="glass-btn secondary" type="button" @click="openImageInNewTab" :disabled="!previewImageUrl">
+                    新窗口查看
+                  </button>
+                  <button class="glass-btn primary" type="button" @click="downloadImage" :disabled="!previewImageUrl">
+                    下载图片
+                  </button>
+                </div>
+              </div>
+            </div>
+            <div class="preview-meta">
+              <div class="meta-row">
+                <span class="meta-label">类型</span>
+                <span class="meta-value">{{ primarySelection.type }}</span>
+              </div>
+              <div class="meta-row">
+                <span class="meta-label">文件夹</span>
+                <span class="meta-value">{{ getFolderName(primarySelection.folderId) }}</span>
+              </div>
+              <div class="meta-row">
+                <span class="meta-label">大小</span>
+                <span class="meta-value">{{ formatFileSize(primarySelection.size) }}</span>
+              </div>
+              <div class="meta-row">
+                <span class="meta-label">更新时间</span>
+                <span class="meta-value">{{ formatAbsoluteTime(primarySelection.lastModified) }}</span>
+              </div>
+            </div>
+            <div class="preview-actions">
+              <button class="glass-btn primary" @click="playItem(primarySelection)">
+                ▶️ 播放
+              </button>
+              <button class="glass-btn secondary" @click="clearSelection">
+                ✕ 清除选择
+              </button>
+              <button class="glass-btn danger" @click="removeSelection">
+                🗑️ 移除文件
+              </button>
+            </div>
+          </aside>
         </div>
       </div>
     </div>
@@ -175,11 +325,12 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { useMediaLibraryStore } from '@/stores/mediaLibrary'
 import { useMediaStore } from '@/stores/media'
 import type { MediaLibraryItem, MediaFolder } from '@/stores/mediaLibrary'
+import { openImagePreviewWindow } from '@/utils/imagePreview'
 
 const router = useRouter()
 const mediaLibraryStore = useMediaLibraryStore()
@@ -187,16 +338,43 @@ const mediaStore = useMediaStore()
 
 const searchQuery = ref('')
 const typeFilter = ref('')
+const viewMode = ref<'grid' | 'list'>('grid')
+const sortOption = ref<'name' | 'date' | 'size'>('name')
+const isFoldersCollapsed = ref(false)
+const previewImageUrl = ref<string | null>(null)
+const isImageLoading = ref(false)
+const imagePreviewError = ref<string | null>(null)
+const imageZoom = ref(100)
+const lastSelectedIndex = ref<number | null>(null)
 
 // 计算属性
 const stats = computed(() => mediaLibraryStore.getTypeStats)
 const selectedFolder = computed(() => mediaLibraryStore.getSelectedFolder)
+const selectedItems = computed(() => mediaLibraryStore.getSelectedItems)
+const primarySelection = computed(() => selectedItems.value[0] || null)
+const selectionCount = computed(() => selectedItems.value.length)
+const isImageSelected = computed(() => primarySelection.value?.type === 'image')
+
+const baseItems = computed(() => (
+  mediaLibraryStore.selectedFolderId
+    ? mediaLibraryStore.getSelectedFolderItems
+    : mediaLibraryStore.items
+))
+
+const sortItems = (items: MediaLibraryItem[]) => {
+  const sorted = [...items]
+  switch (sortOption.value) {
+    case 'date':
+      return sorted.sort((a, b) => b.lastModified - a.lastModified)
+    case 'size':
+      return sorted.sort((a, b) => b.size - a.size)
+    default:
+      return sorted.sort((a, b) => a.name.localeCompare(b.name))
+  }
+}
 
 const filteredItems = computed(() => {
-  // 当没有选中特定文件夹时，显示所有项目；否则显示选中文件夹的项目
-  let items = mediaLibraryStore.selectedFolderId 
-    ? mediaLibraryStore.getSelectedFolderItems 
-    : mediaLibraryStore.items
+  let items = [...baseItems.value]
 
   // 应用类型过滤
   if (typeFilter.value) {
@@ -211,7 +389,7 @@ const filteredItems = computed(() => {
     )
   }
 
-  return items
+  return sortItems(items)
 })
 
 // 方法
@@ -252,7 +430,8 @@ const scanFolder = async (folderId: string, folderPath: string) => {
     mediaLibraryStore.setSelectedFolder(folderId)
   } catch (error) {
     console.error('扫描文件夹失败:', error)
-    alert('扫描文件夹失败: ' + error.message)
+    const message = error instanceof Error ? error.message : String(error)
+    alert('扫描文件夹失败: ' + message)
   } finally {
     mediaLibraryStore.setLoading(false)
   }
@@ -270,10 +449,6 @@ const removeFolder = (folderId: string) => {
 
 const selectFolder = (folderId: string) => {
   mediaLibraryStore.setSelectedFolder(folderId)
-}
-
-const toggleFileSelection = (itemId: string) => {
-  mediaLibraryStore.toggleItemSelected(itemId)
 }
 
 const playItem = (item: MediaLibraryItem) => {
@@ -300,6 +475,125 @@ const refreshLibrary = () => {
   mediaLibraryStore.folders.forEach(folder => {
     rescanFolder(folder)
   })
+}
+
+const selectAllVisible = () => {
+  if (!filteredItems.value.length) return
+  mediaLibraryStore.setSelectedItems(filteredItems.value.map(item => item.id))
+}
+
+const clearSelection = () => {
+  mediaLibraryStore.clearSelection()
+  lastSelectedIndex.value = null
+}
+
+const playSelection = () => {
+  const target = primarySelection.value || filteredItems.value[0]
+  if (target) {
+    playItem(target)
+  }
+}
+
+const toggleFoldersPanel = () => {
+  isFoldersCollapsed.value = !isFoldersCollapsed.value
+}
+
+const handleFileClick = (event: MouseEvent, item: MediaLibraryItem, index: number) => {
+  const isRangeSelection = event.shiftKey
+  const isToggleSelection = event.ctrlKey || event.metaKey
+
+  if (isRangeSelection && lastSelectedIndex.value !== null) {
+    const start = Math.min(lastSelectedIndex.value, index)
+    const end = Math.max(lastSelectedIndex.value, index)
+    const rangeIds = filteredItems.value.slice(start, end + 1).map(entry => entry.id)
+    mediaLibraryStore.setSelectedItems(rangeIds)
+    return
+  }
+
+  if (isToggleSelection) {
+    mediaLibraryStore.toggleItemSelected(item.id)
+    if (mediaLibraryStore.selectedItemIds.has(item.id)) {
+      lastSelectedIndex.value = index
+    }
+    return
+  }
+
+  mediaLibraryStore.setSelectedItems([item.id])
+  lastSelectedIndex.value = index
+}
+
+let imagePreviewRequestId = 0
+watch(() => primarySelection.value?.path, async () => {
+  imagePreviewError.value = null
+  previewImageUrl.value = null
+  imageZoom.value = 100
+
+  if (!isImageSelected.value || !primarySelection.value?.path) {
+    isImageLoading.value = false
+    return
+  }
+
+  const currentRequest = ++imagePreviewRequestId
+  isImageLoading.value = true
+
+  try {
+    const dataUrl = await window.electronAPI.getFileData(primarySelection.value.path)
+    if (currentRequest !== imagePreviewRequestId) return
+    if (dataUrl) {
+      previewImageUrl.value = dataUrl
+    } else {
+      imagePreviewError.value = '无法加载图片数据'
+    }
+  } catch (error) {
+    if (currentRequest === imagePreviewRequestId) {
+      console.error('Failed to load image preview:', error)
+      imagePreviewError.value = '加载图片失败'
+    }
+  } finally {
+    if (currentRequest === imagePreviewRequestId) {
+      isImageLoading.value = false
+    }
+  }
+})
+
+const resetImageZoom = () => {
+  imageZoom.value = 100
+}
+
+const downloadImage = () => {
+  if (!previewImageUrl.value || !primarySelection.value) return
+  const anchor = document.createElement('a')
+  anchor.href = previewImageUrl.value
+  anchor.download = primarySelection.value.name
+  document.body.appendChild(anchor)
+  anchor.click()
+  document.body.removeChild(anchor)
+}
+
+const openImageInNewTab = () => {
+  if (!previewImageUrl.value) return
+  const title = primarySelection.value?.name || '图片预览'
+  const success = openImagePreviewWindow(previewImageUrl.value, title)
+  if (!success) {
+    alert('无法打开预览窗口，请检查浏览器弹窗设置')
+  }
+}
+
+const removeSelection = () => {
+  if (!selectedItems.value.length) return
+  if (confirm(`确定要移除选中的 ${selectedItems.value.length} 个文件吗？`)) {
+    mediaLibraryStore.removeMediaItems(selectedItems.value.map(item => item.id))
+  }
+}
+
+const formatAbsoluteTime = (timestamp: number) => {
+  const date = new Date(timestamp)
+  return `${date.toLocaleDateString()} ${date.toLocaleTimeString()}`
+}
+
+const getFolderName = (folderId: string) => {
+  const folder = mediaLibraryStore.folders.find(folder => folder.id === folderId)
+  return folder ? folder.name : '未分类'
 }
 
 // 工具函数
@@ -521,22 +815,73 @@ onMounted(async () => {
 /* 主要内容区域 */
 .library-content {
   display: grid;
-  grid-template-columns: 350px 1fr;
+  grid-template-columns: 320px 1fr;
   gap: 30px;
   position: relative;
   z-index: 1;
   min-height: 600px;
   width: 100%;
   box-sizing: border-box;
-  overflow-y: auto;
-  height: 100%;
-  max-height: calc(100vh - 200px); /* 确保不会遮挡其他元素 */
+  align-items: flex-start;
+}
+
+.library-content.sidebar-collapsed {
+  grid-template-columns: 96px 1fr;
 }
 
 /* 文件夹列表 */
 .folders-section {
   display: flex;
   flex-direction: column;
+  transition: width 0.3s ease;
+  min-height: 0;
+}
+
+.folders-section.collapsed {
+  width: 80px;
+}
+
+.folders-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.sidebar-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--text-secondary);
+  border-radius: 12px;
+  padding: 6px 10px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  backdrop-filter: blur(12px);
+}
+
+.sidebar-toggle:hover {
+  color: var(--text-primary);
+  border-color: var(--accent-primary);
+}
+
+.folders-section.collapsed .section-title,
+.folders-section.collapsed .toggle-text {
+  display: none;
+}
+
+.folders-section.collapsed .folders-header {
+  flex-direction: column;
+  gap: 8px;
+  align-items: center;
+}
+
+.folders-section.collapsed .sidebar-toggle {
+  padding: 10px;
+  border-radius: 50%;
 }
 
 .section-title {
@@ -551,6 +896,7 @@ onMounted(async () => {
   display: flex;
   flex-direction: column;
   gap: 12px;
+  min-height: 0;
 }
 
 .folder-item {
@@ -688,10 +1034,48 @@ onMounted(async () => {
   margin-bottom: 20px;
 }
 
+.section-heading {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.section-subtitle {
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+
 .files-controls {
   display: flex;
   gap: 12px;
   align-items: center;
+}
+
+.view-toggle {
+  display: inline-flex;
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  border-radius: 10px;
+  overflow: hidden;
+  backdrop-filter: blur(12px);
+}
+
+.toggle-btn {
+  background: transparent;
+  border: none;
+  color: var(--text-secondary);
+  width: 36px;
+  height: 36px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.toggle-btn.active {
+  background: rgba(0, 212, 255, 0.15);
+  color: var(--accent-primary);
+}
+
+.toggle-btn:not(.active):hover {
+  background: rgba(255, 255, 255, 0.1);
 }
 
 .search-box {
@@ -713,12 +1097,23 @@ onMounted(async () => {
   color: var(--text-secondary);
 }
 
+.files-body {
+  display: flex;
+  gap: 24px;
+  align-items: flex-start;
+}
+
 .files-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
   gap: 16px;
   flex: 1;
-  overflow-y: auto;
+  padding-right: 8px;
+}
+
+.files-grid.list {
+  display: flex;
+  flex-direction: column;
 }
 
 .file-item {
@@ -756,6 +1151,10 @@ onMounted(async () => {
 .file-item.selected {
   background: rgba(0, 212, 255, 0.1);
   border-color: var(--accent-primary);
+}
+
+.file-item.list {
+  align-items: flex-start;
 }
 
 .file-preview {
@@ -821,6 +1220,244 @@ onMounted(async () => {
 
 .file-item:hover .file-actions {
   opacity: 1;
+}
+
+.file-extra {
+  margin-top: 6px;
+  font-size: 12px;
+  color: var(--text-tertiary);
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.selection-toolbar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 12px 20px;
+  justify-content: space-between;
+  margin-bottom: 16px;
+  padding: 16px 20px;
+  border-radius: 16px;
+}
+
+.selection-info {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  color: var(--text-secondary);
+}
+
+.selection-count {
+  font-size: 20px;
+  font-weight: 700;
+  color: var(--accent-primary);
+}
+
+.selection-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+.selection-actions .glass-btn.danger {
+  background: rgba(255, 82, 82, 0.15);
+  border-color: rgba(255, 82, 82, 0.3);
+  color: #ff6b6b;
+}
+
+.selection-actions .glass-btn.danger:hover {
+  background: rgba(255, 82, 82, 0.2);
+}
+
+.preview-pane {
+  width: 320px;
+  flex-shrink: 0;
+  position: sticky;
+  top: 80px;
+}
+
+.preview-media {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  margin-bottom: 20px;
+}
+
+.image-preview {
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 16px;
+  background: rgba(0, 0, 0, 0.25);
+  padding: 12px;
+}
+
+.image-stage {
+  height: 220px;
+  border-radius: 12px;
+  background: rgba(0, 0, 0, 0.35);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  position: relative;
+}
+
+.image-stage img {
+  max-width: 100%;
+  max-height: 100%;
+  transition: transform 0.2s ease;
+}
+
+.image-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  color: var(--text-secondary);
+  font-size: 14px;
+}
+
+.image-state.error {
+  color: #ff6b6b;
+}
+
+.image-controls {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.control-label {
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+
+.zoom-control {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.zoom-control input[type='range'] {
+  flex: 1;
+}
+
+.zoom-value {
+  font-size: 13px;
+  color: var(--text-secondary);
+  min-width: 48px;
+  text-align: right;
+}
+
+.image-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.loading-spinner.small {
+  width: 28px;
+  height: 28px;
+  border-width: 2px;
+}
+
+.preview-header {
+  display: flex;
+  gap: 16px;
+  align-items: center;
+  margin-bottom: 16px;
+}
+
+.preview-icon {
+  width: 56px;
+  height: 56px;
+  border-radius: 16px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 28px;
+  background: rgba(255, 255, 255, 0.1);
+}
+
+.preview-titles {
+  flex: 1;
+  min-width: 0;
+}
+
+.preview-title {
+  margin: 0;
+  font-size: 18px;
+  color: var(--text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.preview-path {
+  font-size: 12px;
+  color: var(--text-tertiary);
+  margin: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.preview-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 20px;
+}
+
+.meta-row {
+  display: flex;
+  justify-content: space-between;
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+
+.meta-label {
+  color: var(--text-tertiary);
+}
+
+.meta-value {
+  color: var(--text-primary);
+  text-align: right;
+  margin-left: 12px;
+}
+
+.preview-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+@media (max-width: 1200px) {
+  .library-content {
+    grid-template-columns: minmax(240px, 35%) 1fr;
+    gap: 20px;
+  }
+
+  .files-body {
+    flex-direction: column;
+  }
+
+  .preview-pane {
+    width: 100%;
+    position: static;
+  }
+
+  .image-stage {
+    height: 200px;
+  }
+
+  .preview-actions {
+    flex-direction: row;
+    flex-wrap: wrap;
+  }
 }
 
 /* 空状态 */
@@ -958,6 +1595,11 @@ onMounted(async () => {
 
   .search-box input {
     width: 100%;
+  }
+
+  .library-content {
+    grid-template-columns: minmax(72px, 32%) 1fr;
+    gap: 16px;
   }
 
   .files-grid {

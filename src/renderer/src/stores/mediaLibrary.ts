@@ -247,25 +247,29 @@ export const useMediaLibraryStore = defineStore('mediaLibrary', {
       await this.saveToStorage()
     },
 
-    // 保存到存储
+    // 保存到存储 - 修复版本，处理 Set 序列化问题
     async saveToStorage() {
+      const serializeState = () => ({
+        folders: this.folders.map(folder => ({ ...folder })),
+        items: this.items.map(item => ({ ...item })),
+        selectedFolderId: this.selectedFolderId,
+        selectedItemIds: Array.from(this.selectedItemIds) // Set 转 Array
+      });
+
       try {
         // 延迟初始化 mediaLibraryDB
         if (!mediaLibraryDB) {
           mediaLibraryDB = getMediaLibraryDB();
         }
-        
-        const data = {
-          folders: this.folders,
-          items: this.items,
-          selectedFolderId: this.selectedFolderId
-        }
-        
+
+        // 将 Proxy/Set 转换为可序列化的普通对象
+        const data = serializeState();
+
         // 使用 Promise.race 设置超时
         const timeoutPromise = new Promise((_, reject) => {
           setTimeout(() => reject(new Error('Storage operation timed out')), 3000);
         });
-        
+
         await Promise.race([
           mediaLibraryDB.saveLibrary(data),
           timeoutPromise
@@ -274,11 +278,7 @@ export const useMediaLibraryStore = defineStore('mediaLibrary', {
         console.error('保存媒体库数据失败:', error)
         // 如果失败，尝试使用 localStorage 作为备用
         try {
-          const backupData = {
-            folders: this.folders,
-            items: this.items,
-            selectedFolderId: this.selectedFolderId
-          };
+          const backupData = serializeState();
           localStorage.setItem('mediaLibrary_backup', JSON.stringify(backupData));
         } catch (backupError) {
           console.error('备份到 localStorage 失败:', backupError);
@@ -286,33 +286,35 @@ export const useMediaLibraryStore = defineStore('mediaLibrary', {
       }
     },
 
-    // 从存储加载
+    // 从存储加载 - 修复版本，处理 Set 反序列化
     async loadFromStorage() {
       try {
         // 延迟初始化 mediaLibraryDB
         if (!mediaLibraryDB) {
           mediaLibraryDB = getMediaLibraryDB();
         }
-        
+
         // 使用 Promise.race 设置超时
         const timeoutPromise = new Promise((_, reject) => {
           setTimeout(() => reject(new Error('Storage operation timed out')), 3000);
         });
-        
+
         // 首先尝试从IndexedDB加载
         const data = await Promise.race([
           mediaLibraryDB.getLibrary(),
           timeoutPromise
         ]);
-        
+
         if (data) {
           this.folders = data.folders || []
           this.items = data.items || []
           this.selectedFolderId = data.selectedFolderId || null
+          // 将数组转换回 Set
+          this.selectedItemIds = new Set(data.selectedItemIds || [])
         }
       } catch (error) {
         console.error('加载媒体库数据失败:', error)
-        
+
         // 如果从 IndexedDB 加载失败，尝试从 localStorage 备份中恢复
         try {
           const backupData = localStorage.getItem('mediaLibrary_backup');
@@ -321,6 +323,8 @@ export const useMediaLibraryStore = defineStore('mediaLibrary', {
             this.folders = parsedData.folders || [];
             this.items = parsedData.items || [];
             this.selectedFolderId = parsedData.selectedFolderId || null;
+            // 将数组转换回 Set
+            this.selectedItemIds = new Set(parsedData.selectedItemIds || []);
             console.log('从 localStorage 备份恢复数据成功');
           }
         } catch (backupError) {
@@ -329,7 +333,7 @@ export const useMediaLibraryStore = defineStore('mediaLibrary', {
       }
     },
 
-    // 初始化存储（包括迁移）
+    // 初始化存储（包括迁移）- 修复版本
     async initializeStorage() {
       try {
         await this.loadFromStorage()
@@ -341,17 +345,17 @@ export const useMediaLibraryStore = defineStore('mediaLibrary', {
             if (!mediaLibraryDB) {
               mediaLibraryDB = getMediaLibraryDB();
             }
-            
+
             // 使用 Promise.race 设置超时
             const timeoutPromise = new Promise((_, reject) => {
               setTimeout(() => reject(new Error('Migration operation timed out')), 3000);
             });
-            
+
             await Promise.race([
               mediaLibraryDB.migrateFromLocalStorage(),
               timeoutPromise
             ]);
-            
+
             await this.loadFromStorage();
           } catch (migrationError) {
             console.error('从 localStorage 迁移失败:', migrationError);
@@ -363,6 +367,8 @@ export const useMediaLibraryStore = defineStore('mediaLibrary', {
                 this.folders = parsedData.folders || [];
                 this.items = parsedData.items || [];
                 this.selectedFolderId = parsedData.selectedFolderId || null;
+                // 初始化空 Set
+                this.selectedItemIds = new Set();
                 console.log('直接从 localStorage 加载数据成功');
               }
             } catch (directLoadError) {

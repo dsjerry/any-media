@@ -1,6 +1,6 @@
-import { defineConfig, externalizeDepsPlugin } from 'electron-vite'
-import { resolve } from 'path'
-import vue from '@vitejs/plugin-vue'
+import { defineConfig, externalizeDepsPlugin } from 'electron-vite';
+import { resolve } from 'path';
+import vue from '@vitejs/plugin-vue';
 
 export default defineConfig({
   main: {
@@ -21,6 +21,10 @@ export default defineConfig({
     }
   },
   renderer: {
+    server: {
+      host: '0.0.0.0',
+      port: 4000
+    },
     root: 'src/renderer/src',
     plugins: [vue()],
     build: {
@@ -38,4 +42,4 @@ export default defineConfig({
       }
     }
   }
-})
+});

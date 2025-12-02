@@ -6,7 +6,6 @@
       class="video-js vjs-default-skin vjs-big-play-centered"
       preload="auto"
       :poster="poster"
-      data-setup='{"fluid": true}'
     >
       您的浏览器不支持视频播放。
     </video>
@@ -35,6 +34,7 @@ interface VideoPlayerEmits {
   (e: "ended"): void
   (e: "error", error: any): void
   (e: "loadedmetadata", metadata: any): void
+  (e: "timeupdate", currentTime: number): void
 }
 // Props 和 Emits
 const props = withDefaults(defineProps<VideoPlayerProps>(), {
@@ -97,7 +97,7 @@ const initVideoPlayer = () => {
 
   // Video.js 配置
   const options = {
-    fluid: true, // 使用流体布局适应容器
+    fill: true,
     responsive: true,
     controls: props.showControls,
     autoplay: props.autoplay,
@@ -230,11 +230,23 @@ const setupEventListeners = () => {
 
   // 元数据加载完成
   videoElement.on("loadedmetadata", () => {
-    emit("loadedmetadata", {
+    const metadata = {
       duration: videoElement.duration(),
       videoWidth: videoElement.videoWidth(),
       videoHeight: videoElement.videoHeight(),
-    })
+    }
+
+    if (metadata.videoWidth && metadata.videoHeight && player.value) {
+      const ratio = `${metadata.videoWidth}:${metadata.videoHeight}`
+      player.value.aspectRatio(ratio)
+    }
+
+    emit("loadedmetadata", metadata)
+  })
+
+  // 时间更新事件
+  videoElement.on("timeupdate", () => {
+    emit("timeupdate", player.value?.currentTime() || 0)
   })
 }
 
@@ -379,26 +391,31 @@ onUnmounted(() => {
 .video-player-container {
   position: relative;
   width: 100%;
-  padding-bottom: 56.25%; /* 16:9 宽高比 (9/16 = 0.5625) */
-  height: 0;
+  height: 100%;
+  min-height: 320px;
   background: #000;
-  border-radius: 12px;
+  border-radius: 16px;
   overflow: hidden;
+  display: flex;
 }
 
 /* 全屏模式下的视频播放器容器 */
 .video-player-container:fullscreen {
-  padding-bottom: 0;
-  height: 100%;
+  min-height: 0;
 }
 
 .video-js {
-  position: absolute;
-  top: 0;
-  left: 0;
+  position: relative;
   width: 100%;
   height: 100%;
-  border-radius: 12px !important;
+  border-radius: 16px !important;
+}
+
+:deep(.vjs-tech) {
+  width: 100% !important;
+  height: 100% !important;
+  object-fit: contain !important;
+  background: #000;
 }
 
 /* 大播放按钮 */
