@@ -2,7 +2,10 @@ import { defineStore } from 'pinia'
 import { getMediaLibraryDB } from '../services/mediaLibraryDB'
 
 // 延迟初始化 mediaLibraryDB
-let mediaLibraryDB: any = null;
+let mediaLibraryDB: any = null
+
+let saveDebounceTimer: ReturnType<typeof setTimeout> | null = null
+const SAVE_DEBOUNCE_MS = 500
 
 export interface MediaLibraryItem {
   id: string
@@ -97,29 +100,33 @@ export const useMediaLibraryStore = defineStore('mediaLibrary', {
   },
 
   actions: {
-    // 添加文件夹
-    addFolder(folder: Omit<MediaFolder, 'id'>) {
+    // 添加文件夹（内部方法，不自动保存）
+    addFolderInternal(folder: Omit<MediaFolder, 'id'>): MediaFolder {
       const newFolder: MediaFolder = {
         ...folder,
         id: `folder_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`
       }
       this.folders.push(newFolder)
-      this.saveToStorage()
+      return newFolder
+    },
+
+    // 添加文件夹
+    addFolder(folder: Omit<MediaFolder, 'id'>) {
+      const newFolder = this.addFolderInternal(folder)
+      this.debouncedSave()
       return newFolder
     },
 
     // 移除文件夹
     removeFolder(folderId: string) {
       this.folders = this.folders.filter(folder => folder.id !== folderId)
-      // 同时移除该文件夹下的所有项目
       this.items = this.items.filter(item => item.folderId !== folderId)
 
-      // 如果移除的是当前选中的文件夹，清除选择
       if (this.selectedFolderId === folderId) {
         this.selectedFolderId = null
       }
 
-      this.saveToStorage()
+      this.debouncedSave()
     },
 
     // 更新文件夹
@@ -127,16 +134,15 @@ export const useMediaLibraryStore = defineStore('mediaLibrary', {
       const index = this.folders.findIndex(folder => folder.id === folderId)
       if (index !== -1) {
         this.folders[index] = { ...this.folders[index], ...updates }
-        this.saveToStorage()
+        this.debouncedSave()
       }
     },
 
     // 设置选中的文件夹
     setSelectedFolder(folderId: string | null) {
       this.selectedFolderId = folderId
-      // 清除项目选择，因为切换了文件夹
       this.selectedItemIds.clear()
-      this.saveToStorage()
+      this.debouncedSave()
     },
 
     // 切换文件夹展开状态
@@ -144,50 +150,54 @@ export const useMediaLibraryStore = defineStore('mediaLibrary', {
       const folder = this.folders.find(f => f.id === folderId)
       if (folder) {
         folder.isExpanded = !folder.isExpanded
-        this.saveToStorage()
+        this.debouncedSave()
       }
     },
 
-    // 添加媒体项目
-    addMediaItem(item: Omit<MediaLibraryItem, 'id'>) {
+    // 添加媒体项目（内部方法，不自动保存）
+    addMediaItemInternal(item: Omit<MediaLibraryItem, 'id'>): MediaLibraryItem {
       const existingItem = this.items.find(existing =>
         existing.path === item.path && existing.folderId === item.folderId
       )
 
       if (existingItem) {
-        // 如果项目已存在，更新它
         Object.assign(existingItem, item)
-      } else {
-        // 否则添加新项目
-        const newItem: MediaLibraryItem = {
-          ...item,
-          id: `item_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`
-        }
-        this.items.push(newItem)
+        return existingItem
       }
 
-      this.saveToStorage()
+      const newItem: MediaLibraryItem = {
+        ...item,
+        id: `item_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`
+      }
+      this.items.push(newItem)
+      return newItem
+    },
+
+    // 添加媒体项目
+    addMediaItem(item: Omit<MediaLibraryItem, 'id'>) {
+      this.addMediaItemInternal(item)
+      this.debouncedSave()
     },
 
     // 批量添加媒体项目
     addMediaItems(items: Omit<MediaLibraryItem, 'id'>[]) {
-      items.forEach(item => {
-        this.addMediaItem(item)
-      })
+      items.forEach(item => this.addMediaItemInternal(item))
+      this.debouncedSave()
     },
 
     // 移除媒体项目
     removeMediaItem(itemId: string) {
       this.items = this.items.filter(item => item.id !== itemId)
       this.selectedItemIds.delete(itemId)
-      this.saveToStorage()
+      this.debouncedSave()
     },
 
     // 批量移除媒体项目
     removeMediaItems(itemIds: string[]) {
-      this.items = this.items.filter(item => !itemIds.includes(item.id))
+      const idSet = new Set(itemIds)
+      this.items = this.items.filter(item => !idSet.has(item.id))
       itemIds.forEach(id => this.selectedItemIds.delete(id))
-      this.saveToStorage()
+      this.debouncedSave()
     },
 
     // 更新媒体项目
@@ -195,7 +205,7 @@ export const useMediaLibraryStore = defineStore('mediaLibrary', {
       const index = this.items.findIndex(item => item.id === itemId)
       if (index !== -1) {
         this.items[index] = { ...this.items[index], ...updates }
-        this.saveToStorage()
+        this.debouncedSave()
       }
     },
 
@@ -203,6 +213,7 @@ export const useMediaLibraryStore = defineStore('mediaLibrary', {
     setSelectedItems(itemIds: string[]) {
       this.selectedItemIds.clear()
       itemIds.forEach(id => this.selectedItemIds.add(id))
+      this.debouncedSave()
     },
 
     // 切换项目选中状态
@@ -212,11 +223,13 @@ export const useMediaLibraryStore = defineStore('mediaLibrary', {
       } else {
         this.selectedItemIds.add(itemId)
       }
+      this.debouncedSave()
     },
 
     // 清除所有选择
     clearSelection() {
       this.selectedItemIds.clear()
+      this.debouncedSave()
     },
 
     // 全选当前文件夹
@@ -225,6 +238,7 @@ export const useMediaLibraryStore = defineStore('mediaLibrary', {
 
       const folderItems = this.items.filter(item => item.folderId === this.selectedFolderId)
       folderItems.forEach(item => this.selectedItemIds.add(item.id))
+      this.debouncedSave()
     },
 
     // 设置加载状态
@@ -235,7 +249,7 @@ export const useMediaLibraryStore = defineStore('mediaLibrary', {
     // 清空文件夹的所有项目
     clearFolderItems(folderId: string) {
       this.items = this.items.filter(item => item.folderId !== folderId)
-      this.saveToStorage()
+      this.debouncedSave()
     },
 
     // 清空整个媒体库
@@ -244,6 +258,25 @@ export const useMediaLibraryStore = defineStore('mediaLibrary', {
       this.items = []
       this.selectedFolderId = null
       this.selectedItemIds.clear()
+      await this.flushSave()
+    },
+
+    // 防抖保存
+    debouncedSave() {
+      if (saveDebounceTimer) {
+        clearTimeout(saveDebounceTimer)
+      }
+      saveDebounceTimer = setTimeout(() => {
+        this.saveToStorage()
+      }, SAVE_DEBOUNCE_MS)
+    },
+
+    // 强制立即保存
+    async flushSave() {
+      if (saveDebounceTimer) {
+        clearTimeout(saveDebounceTimer)
+        saveDebounceTimer = null
+      }
       await this.saveToStorage()
     },
 
@@ -381,7 +414,7 @@ export const useMediaLibraryStore = defineStore('mediaLibrary', {
       }
     },
 
-    // 扫描文件夹中的媒体文件
+    // 扫描文件夹中的媒体文件（优化版本）
     async scanFolder(folderId: string, files: Array<{
       name: string
       path: string
@@ -395,10 +428,10 @@ export const useMediaLibraryStore = defineStore('mediaLibrary', {
       this.setLoading(true)
 
       try {
-        // 清空现有项目
-        this.clearFolderItems(folderId)
+        // 移除该文件夹下的现有项目
+        this.items = this.items.filter(item => item.folderId !== folderId)
 
-        // 添加新项目
+        // 批量添加新项目（使用内部方法，避免重复保存）
         const mediaItems = files.map(file => ({
           name: file.name,
           path: file.path,
@@ -408,14 +441,17 @@ export const useMediaLibraryStore = defineStore('mediaLibrary', {
           folderId: folderId
         }))
 
-        this.addMediaItems(mediaItems)
+        mediaItems.forEach(item => this.addMediaItemInternal(item))
 
         // 更新文件夹信息
-        this.updateFolder(folderId, {
-          itemCount: files.length,
-          lastScanned: Date.now()
-        })
+        const folderIndex = this.folders.findIndex(f => f.id === folderId)
+        if (folderIndex !== -1) {
+          this.folders[folderIndex].itemCount = files.length
+          this.folders[folderIndex].lastScanned = Date.now()
+        }
 
+        // 一次性保存
+        await this.flushSave()
       } catch (error) {
         console.error('扫描文件夹失败:', error)
       } finally {

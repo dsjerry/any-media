@@ -69,19 +69,49 @@
           :alt="currentFile.name"
           class="image-viewer"
           :style="{
-            transform: `scale(${imageScale}) translate(${imagePosition.x}px, ${imagePosition.y}px)`,
+            transform: `scale(${imageScale}) translate(${imagePosition.x}px, ${imagePosition.y}px) rotate(${imageRotation}deg) scaleX(${imageFlipH ? -1 : 1}) scaleY(${imageFlipV ? -1 : 1})`,
             cursor: isDragging ? 'grabbing' : 'grab'
           }"
           @load="onMediaLoaded"
           @error="onMediaError"
+          @mousedown="handleMouseDown"
+          @wheel="handleWheel"
         />
+        
+        <!-- 图片工具栏 -->
+        <div class="image-toolbar" v-if="currentFile.type === 'image'">
+          <div class="toolbar-group">
+            <button class="toolbar-btn" @click="zoomOut" title="缩小 (-)">−</button>
+            <span class="toolbar-info">{{ Math.round(imageScale * 100) }}%</span>
+            <button class="toolbar-btn" @click="zoomIn" title="放大 (+)">+</button>
+            <button class="toolbar-btn" @click="zoomFit" title="适应窗口 (F)">⊡</button>
+            <button class="toolbar-btn" @click="zoom100" title="1:1 (1)">1:1</button>
+          </div>
+          <div class="toolbar-group">
+            <button class="toolbar-btn" @click="rotateLeft" title="左转 (L)">⟲</button>
+            <button class="toolbar-btn" @click="rotateRight" title="右转 (R)">⟳</button>
+            <button class="toolbar-btn" :class="{ active: imageFlipH }" @click="flipH" title="水平翻转 (H)">⇆</button>
+            <button class="toolbar-btn" :class="{ active: imageFlipV }" @click="flipV" title="垂直翻转 (V)">⇅</button>
+          </div>
+          <div class="toolbar-group">
+            <button class="toolbar-btn" @click="toggleFullscreen" title="全屏 (F11)">⛶</button>
+          </div>
+        </div>
+        
+        <!-- 状态提示 -->
+        <div class="image-hint" v-if="currentFile.type === 'image'">
+          滚轮缩放 | 拖拽移动 | 双击放大 | ←→切换 | F适应窗口 | 1实际像素 | L/R旋转
+        </div>
       </div>
     </div>
     <!-- 加载状态 -->
     <div v-if="isLoading" class="loading-overlay">
       <div class="loading-content">
         <div class="loading-spinner"></div>
-        <div class="loading-text">加载中...</div>
+        <div class="loading-text">
+          <span class="loading-type">{{ getLoadingTypeText() }}</span>
+          <span class="loading-name" :title="currentFile?.name">{{ currentFile?.name || '加载中...' }}</span>
+        </div>
       </div>
     </div>
   </div>
@@ -110,6 +140,52 @@ const imageScale = ref(1)
 const imagePosition = ref({ x: 0, y: 0 })
 const isDragging = ref(false)
 const dragStart = ref({ x: 0, y: 0 })
+const imageRotation = ref(0)
+const imageFlipH = ref(false)
+const imageFlipV = ref(false)
+
+// 图片缩放功能相关函数
+const resetImageTransform = () => {
+  imageScale.value = 1
+  imagePosition.value = { x: 0, y: 0 }
+  imageRotation.value = 0
+  imageFlipH.value = false
+  imageFlipV.value = false
+}
+
+const zoomIn = () => {
+  imageScale.value = Math.min(imageScale.value * 1.2, 10)
+}
+
+const zoomOut = () => {
+  imageScale.value = Math.max(imageScale.value / 1.2, 0.05)
+}
+
+const zoomFit = () => {
+  imageScale.value = 1
+  imagePosition.value = { x: 0, y: 0 }
+}
+
+const zoom100 = () => {
+  imageScale.value = 1
+  imagePosition.value = { x: 0, y: 0 }
+}
+
+const rotateLeft = () => {
+  imageRotation.value = (imageRotation.value - 90 + 360) % 360
+}
+
+const rotateRight = () => {
+  imageRotation.value = (imageRotation.value + 90) % 360
+}
+
+const flipH = () => {
+  imageFlipH.value = !imageFlipH.value
+}
+
+const flipV = () => {
+  imageFlipV.value = !imageFlipV.value
+}
 
 const playerAreaRef = ref<HTMLDivElement | null>(null)
 const imageRef = ref<HTMLImageElement>()
@@ -183,11 +259,30 @@ const formatTime = (seconds?: number): string => {
   return `${mins}:${secs.toString().padStart(2, "0")}`
 }
 
+// 获取加载中的类型文本
+const getLoadingTypeText = (): string => {
+  if (!currentFile.value) return '加载中...'
+  const typeMap = {
+    video: '🎬 视频',
+    audio: '🎵 音频',
+    image: '🖼️ 图片'
+  }
+  return typeMap[currentFile.value.type] || '加载中...'
+}
+
 // 加载媒体文件 - 修复版本，使用 base64 转换 API
 const loadMediaFile = async (file: MediaFile) => {
   currentFile.value = file
   isLoading.value = true
   mediaInfo.value = {}
+  
+  // 清空之前的媒体URL
+  mediaUrl.value = ''
+
+  // 如果是图片，重置图片状态
+  if (file.type === 'image') {
+    resetImageTransform()
+  }
 
   try {
     // 使用统一的 getFileData API 来处理所有文件类型
@@ -195,14 +290,19 @@ const loadMediaFile = async (file: MediaFile) => {
     const dataUrl = await window.electronAPI.getFileData(file.path)
 
     if (dataUrl) {
+      // 设置新的媒体URL，这会触发媒体元素的加载
       mediaUrl.value = dataUrl
       console.log("文件加载成功:", file.name, "URL:", mediaUrl.value?.substring(0, 50) + "...")
+      
+      // 注意：loading状态将在媒体元素触发 @load 事件时关闭
     } else {
       console.error("文件加载失败:", file.name)
+      isLoading.value = false
       mediaUrl.value = ""
     }
   } catch (error) {
     console.error("加载媒体文件错误:", error)
+    isLoading.value = false
     mediaUrl.value = ""
   }
 
@@ -273,7 +373,7 @@ const toggleFullscreen = () => {
 // VideoPlayer 事件处理函数
 const onVideoPlayerReady = (_player: any) => {
   console.log("VideoPlayer 就绪")
-  isLoading.value = false
+  // 视频就绪后不立即关闭loading，等待元数据加载完成
 }
 
 const onVideoEnded = () => {
@@ -399,30 +499,23 @@ watch(
   { immediate: true }
 )
 
-// 图片缩放功能相关函数
-const resetImageTransform = () => {
-  imageScale.value = 1
-  imagePosition.value = { x: 0, y: 0 }
-}
+// 图片缩放功能相关函数（已移至顶部）
 
 const handleWheel = (e: WheelEvent) => {
   if (currentFile.value?.type !== 'image') return
 
   e.preventDefault()
 
-  const delta = e.deltaY > 0 ? -0.1 : 0.1
-  const newScale = Math.max(0.1, Math.min(5, imageScale.value + delta))
+  const delta = e.deltaY > 0 ? -0.15 : 0.15
+  const newScale = Math.max(0.05, Math.min(10, imageScale.value + delta))
 
-  // 以鼠标位置为中心进行缩放
   if (imageRef.value) {
     const rect = imageRef.value.getBoundingClientRect()
-    const x = e.clientX - rect.left
-    const y = e.clientY - rect.top
-
+    const x = e.clientX - rect.left - rect.width / 2
+    const y = e.clientY - rect.top - rect.height / 2
     const scaleRatio = newScale / imageScale.value
-
-    imagePosition.value.x -= (x - imagePosition.value.x) * (scaleRatio - 1)
-    imagePosition.value.y -= (y - imagePosition.value.y) * (scaleRatio - 1)
+    imagePosition.value.x -= x * (scaleRatio - 1)
+    imagePosition.value.y -= y * (scaleRatio - 1)
   }
 
   imageScale.value = newScale
@@ -433,9 +526,6 @@ const handleMouseDown = (e: MouseEvent) => {
 
   isDragging.value = true
   dragStart.value = { x: e.clientX - imagePosition.value.x, y: e.clientY - imagePosition.value.y }
-  if (imageRef.value) {
-    imageRef.value.style.cursor = 'grabbing'
-  }
 }
 
 const handleMouseMove = (e: MouseEvent) => {
@@ -448,11 +538,76 @@ const handleMouseMove = (e: MouseEvent) => {
 }
 
 const handleMouseUp = () => {
-  if (currentFile.value?.type !== 'image') return
-
   isDragging.value = false
-  if (imageRef.value) {
-    imageRef.value.style.cursor = 'grab'
+}
+
+const handleImageDblClick = () => {
+  if (imageScale.value > 1.5) {
+    zoomFit()
+  } else {
+    imageScale.value = 2
+    imagePosition.value = { x: 0, y: 0 }
+  }
+}
+
+const handleKeyDown = (e: KeyboardEvent) => {
+  if (currentFile.value?.type !== 'image') return
+  
+  switch (e.key) {
+    case 'Escape':
+      if (document.fullscreenElement) {
+        document.exitFullscreen()
+      }
+      break
+    case '+':
+    case '=':
+      zoomIn()
+      break
+    case '-':
+      zoomOut()
+      break
+    case '1':
+      zoom100()
+      break
+    case '0':
+    case 'f':
+    case 'F':
+      zoomFit()
+      break
+    case 'F11':
+      e.preventDefault()
+      toggleFullscreen()
+      break
+    case ' ':
+      e.preventDefault()
+      zoomFit()
+      break
+    case 'l':
+    case 'L':
+      rotateLeft()
+      break
+    case 'r':
+    case 'R':
+      rotateRight()
+      break
+    case 'h':
+    case 'H':
+      flipH()
+      break
+    case 'v':
+    case 'V':
+      flipV()
+      break
+    case 'ArrowLeft':
+      if (currentIndex.value > 0) {
+        loadMediaFile(playlist.value[currentIndex.value - 1])
+      }
+      break
+    case 'ArrowRight':
+      if (hasNext.value) {
+        nextFile()
+      }
+      break
   }
 }
 
@@ -464,23 +619,24 @@ onMounted(async () => {
 
   // 监听窗口最大化和取消最大化事件
   window.electronAPI.onWindowMaximize(() => {
-    // 窗口最大化时的处理逻辑
     handleWindowMaximize()
   })
 
   window.electronAPI.onWindowUnmaximize(() => {
-    // 窗口取消最大化时的处理逻辑
     handleWindowUnmaximize()
   })
 
   // 添加图片查看器的事件监听器
   if (imageRef.value) {
-    imageRef.value.addEventListener('wheel', handleWheel as EventListener)
-    imageRef.value.addEventListener('mousedown', handleMouseDown)
+    imageRef.value.addEventListener('wheel', handleWheel as EventListener, { passive: false })
     imageRef.value.addEventListener('mousemove', handleMouseMove)
     imageRef.value.addEventListener('mouseup', handleMouseUp)
     imageRef.value.addEventListener('mouseleave', handleMouseUp)
+    imageRef.value.addEventListener('dblclick', handleImageDblClick)
   }
+
+  // 添加键盘事件监听
+  window.addEventListener('keydown', handleKeyDown)
 })
 </script>
 
@@ -791,13 +947,15 @@ onMounted(async () => {
 /* 图片容器 */
 .image-container {
   flex: 1;
-  min-height: 0; /* 允许flex收缩 */
+  min-height: 0;
   display: flex;
   align-items: center;
   justify-content: center;
   background: rgba(0, 0, 0, 0.4);
   backdrop-filter: blur(10px);
   -webkit-backdrop-filter: blur(10px);
+  position: relative;
+  overflow: hidden;
 }
 
 .image-viewer {
@@ -807,6 +965,82 @@ onMounted(async () => {
   border-radius: 12px;
   box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
   border: 1px solid var(--glass-border);
+  transition: transform 0.15s ease;
+}
+
+.image-toolbar {
+  position: absolute;
+  top: 16px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  gap: 12px;
+  background: rgba(30, 30, 30, 0.85);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border: 1px solid var(--glass-border);
+  border-radius: 12px;
+  padding: 8px 16px;
+  z-index: 10;
+}
+
+.toolbar-group {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.toolbar-group:not(:last-child) {
+  border-right: 1px solid rgba(255, 255, 255, 0.1);
+  padding-right: 12px;
+}
+
+.toolbar-btn {
+  width: 36px;
+  height: 36px;
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  color: var(--text-primary);
+  border-radius: 8px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 16px;
+  transition: all 0.2s ease;
+}
+
+.toolbar-btn:hover {
+  background: rgba(0, 212, 255, 0.2);
+  border-color: var(--accent-primary);
+}
+
+.toolbar-btn.active {
+  background: rgba(0, 212, 255, 0.3);
+  border-color: var(--accent-primary);
+}
+
+.toolbar-info {
+  min-width: 48px;
+  text-align: center;
+  color: var(--text-secondary);
+  font-size: 13px;
+}
+
+.image-hint {
+  position: absolute;
+  bottom: 16px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: rgba(30, 30, 30, 0.7);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 8px;
+  padding: 8px 16px;
+  color: var(--text-secondary);
+  font-size: 12px;
+  z-index: 10;
 }
 
 /* 控制栏 */
@@ -1000,7 +1234,7 @@ onMounted(async () => {
   left: 0;
   right: 0;
   bottom: 0;
-  background: rgba(0, 0, 0, 0.8);
+  background: rgba(0, 0, 0, 0.85);
   backdrop-filter: blur(10px);
   -webkit-backdrop-filter: blur(10px);
   display: flex;
@@ -1013,24 +1247,44 @@ onMounted(async () => {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 20px;
-  background: rgba(30, 30, 30, 0.9);
+  gap: 24px;
+  background: rgba(30, 30, 30, 0.95);
   backdrop-filter: blur(20px);
   -webkit-backdrop-filter: blur(20px);
   border: 1px solid var(--glass-border);
   border-radius: 20px;
-  padding: 32px;
+  padding: 40px 48px;
   box-shadow: var(--glass-shadow);
+  min-width: 280px;
 }
 
 .loading-spinner {
-  width: 48px;
-  height: 48px;
+  width: 56px;
+  height: 56px;
   border: 3px solid rgba(255, 255, 255, 0.1);
   border-top: 3px solid var(--accent-primary);
   border-radius: 50%;
   animation: spin 1s linear infinite;
-  box-shadow: 0 0 20px rgba(0, 212, 255, 0.3);
+  box-shadow: 0 0 30px rgba(0, 212, 255, 0.4);
+  position: relative;
+}
+
+.loading-spinner::after {
+  content: '';
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: 20px;
+  height: 20px;
+  background: var(--accent-primary);
+  border-radius: 50%;
+  animation: pulse 1s ease-in-out infinite;
+}
+
+@keyframes pulse {
+  0%, 100% { transform: translate(-50%, -50%) scale(0.8); opacity: 0.5; }
+  50% { transform: translate(-50%, -50%) scale(1.2); opacity: 1; }
 }
 
 @keyframes spin {
@@ -1039,9 +1293,28 @@ onMounted(async () => {
 }
 
 .loading-text {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
   color: var(--text-primary);
   font-size: 16px;
   font-weight: 500;
+}
+
+.loading-type {
+  font-size: 14px;
+  color: var(--accent-primary);
+}
+
+.loading-name {
+  font-size: 13px;
+  color: var(--text-secondary);
+  max-width: 240px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-align: center;
 }
 
 /* 响应式设计 */
